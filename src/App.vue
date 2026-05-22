@@ -550,7 +550,7 @@ async function doImport () {
     if (existing) {
       select(existing.id)
     } else {
-      const entry = buildIncomingEntry(parsed, frag, await isOwnAuthor(parsed.publickey))
+      const entry = buildIncomingEntry(parsed, frag, parsed.verified && await isOwnAuthor(parsed.publickey))
       library.value.push(entry)
       saveLibrary(library.value)
       select(entry.id)
@@ -609,7 +609,7 @@ async function importFromHash (frag: string): Promise<boolean> {
     tab.value = 'llaves'
     return true
   }
-  const entry = buildIncomingEntry(parsed, frag, await isOwnAuthor(parsed.publickey))
+  const entry = buildIncomingEntry(parsed, frag, parsed.verified && await isOwnAuthor(parsed.publickey))
   library.value.push(entry)
   saveLibrary(library.value)
   select(entry.id)
