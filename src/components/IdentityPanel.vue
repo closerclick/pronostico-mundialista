@@ -8,7 +8,7 @@ import { resolveTokenToIdentity, ProxyTokenError } from '../lib/proxy'
 
 const { t } = useI18n()
 
-const props = defineProps<{ open: boolean; focusPubkey?: string | null }>()
+const props = defineProps<{ open: boolean; focusPubkey?: string | null; focusNick?: string | null }>()
 const emit = defineEmits<{ close: []; changed: [] }>()
 
 type Tab = 'perfil' | 'contactos' | 'rankings'
@@ -45,10 +45,19 @@ async function load () {
   nickDraft.value = myNick.value
   await refresh()
   if (props.focusPubkey) {
-    // Si nos enfocan en un pubkey concreto (p.ej. desde un pronóstico
-    // firmado) abrimos directamente la pestaña de contactos. Ya no
-    // prerrellenamos la clave: ahora los contactos se agregan por token.
+    // Enfocados en un pubkey concreto (p.ej. el autor de un pronóstico firmado):
+    // ya tenemos su clave pública, así que lo agregamos como contacto SIN token
+    // y dejamos lista la pestaña de contactos para valorarlo.
     tab.value = 'contactos'
+    const pk = props.focusPubkey
+    const exists = contacts.value.some((c) => c.publickey === pk)
+    if (!exists && pk !== inst.me?.publickey) {
+      try {
+        await inst.addContact({ publickey: pk, nickname: props.focusNick || undefined })
+        await refresh()
+        emit('changed')
+      } catch { /* si falla, el usuario puede agregarlo por token */ }
+    }
   }
 }
 

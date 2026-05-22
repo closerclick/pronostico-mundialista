@@ -40,6 +40,7 @@ const shareEntryId = ref<string | null>(null)
 const identityOpen = ref(false)
 const scoringOpen = ref(false)
 const identityFocus = ref<string | null>(null)
+const identityFocusNick = ref<string | null>(null)
 const importOpen = ref(false)
 const importText = ref('')
 const importError = ref('')
@@ -280,12 +281,16 @@ function changeLocale (l: Locale) {
 
 function openProfile () {
   identityFocus.value = null
+  identityFocusNick.value = null
   identityOpen.value = true
   sidebarOpen.value = false
 }
 
 function rateAuthor () {
+  // Ya tenemos la clave pública del autor (viene firmada en el link): el panel
+  // lo agrega como contacto por su clave (sin token) y permite valorarlo.
   identityFocus.value = activeEntry.value?.author?.publickey ?? null
+  identityFocusNick.value = activeEntry.value?.author?.nickname ?? null
   identityOpen.value = true
 }
 
@@ -758,6 +763,7 @@ onUnmounted(() => {
     <IdentityPanel
       :open="identityOpen"
       :focus-pubkey="identityFocus"
+      :focus-nick="identityFocusNick"
       @close="identityOpen = false"
       @changed="library = [...library]"
     />
