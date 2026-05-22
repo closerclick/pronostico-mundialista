@@ -604,7 +604,6 @@ onUnmounted(() => {
     </header>
 
     <div class="active-bar">
-      <button v-if="!isStandalone" class="install-float" data-testid="install-btn" @click="installApp">{{ t('active.install') }}</button>
       <span class="dot" :class="{ ro: readonly }"></span>
       <input
         v-if="editingName"
@@ -636,6 +635,8 @@ onUnmounted(() => {
       <span v-else-if="championId != null" class="champ-chip">
         🏆 {{ teamById(championId).flag }} {{ teamById(championId).code }}
       </span>
+
+      <button v-if="!isStandalone" class="install-inline" data-testid="install-btn" @click="installApp">{{ t('active.install') }}</button>
 
       <!-- Acciones del pronóstico ACTIVO (alineadas a la derecha) -->
       <div v-if="activeId" class="bar-actions" data-testid="bar-actions">
@@ -892,14 +893,13 @@ onUnmounted(() => {
   background: rgba(65, 180, 255, 0.12); color: var(--text); border: 1px solid var(--line);
 }
 .identity-btn:hover { background: rgba(65, 180, 255, 0.22); }
-/* Botón flotante centrado dentro de la barra del pronóstico (active-bar). */
-.install-float {
-  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-  z-index: 30; background: var(--azure); color: #042038; border: none;
-  border-radius: 50px; padding: 0.5rem 1.4rem; font-weight: 800; font-size: 0.95rem;
-  cursor: pointer; white-space: nowrap; box-shadow: 0 6px 22px rgba(0, 0, 0, 0.5);
+/* Botón "Instalar App" en el flujo de la barra, centrado (no flota, no tapa). */
+.install-inline {
+  margin-left: auto; background: var(--azure); color: #042038; border: none;
+  border-radius: 50px; padding: 0.28rem 0.85rem; font-weight: 800; font-size: 0.82rem;
+  cursor: pointer; white-space: nowrap; flex-shrink: 0;
 }
-.install-float:hover { filter: brightness(1.06); }
+.install-inline:hover { filter: brightness(1.06); }
 
 /* Scoreboard header */
 .scoreboard {
