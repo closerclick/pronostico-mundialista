@@ -32,8 +32,9 @@ identidad y compartirlos por QR / redes / PDF. Bilingüe **ES/EN**, tema visual
 y escritorio con barra lateral fija).
 
 ### Tres modos de juego (por pronóstico)
-- **Simple** — ordenás a mano la tabla de cada grupo (arrastrar) y el ranking de
-  los 12 terceros (los 8 mejores clasifican). No se cargan resultados.
+- **Simple** — ordenás a mano la tabla de cada grupo y el ranking de los 12
+  terceros (los 8 mejores clasifican) **arrastrando la fila completa**. No se
+  cargan resultados.
 - **Medio** — marcás **gana/empata/pierde** de cada partido de grupo; las
   posiciones se **calculan** (puntos → enfrentamiento directo → orden de sorteo).
 - **Completo** — cargás el **marcador** (goles) de cada partido; las posiciones

@@ -25,14 +25,13 @@ const POS = ['1º', '2º', '3º', '4º']
     <draggable
       v-model="teams"
       item-key="id"
-      handle=".drag"
       :animation="160"
       ghost-class="ghost"
       :disabled="readonly"
       class="team-list"
     >
       <template #item="{ element, index }">
-        <div class="team-row" data-testid="team-row" :data-team-id="element.id" :class="{ qualifies: index < 2, third: index === 2 }">
+        <div class="team-row" data-testid="team-row" :data-team-id="element.id" :class="{ qualifies: index < 2, third: index === 2, grab: !readonly }">
           <span class="pos">{{ POS[index] }}</span>
           <span class="flag">{{ element.flag }}</span>
           <span class="name">{{ element.name }}</span>
@@ -67,6 +66,8 @@ const POS = ['1º', '2º', '3º', '4º']
   background: var(--panel);
   cursor: default;
 }
+.team-row.grab { cursor: grab; }
+.team-row.grab:active { cursor: grabbing; }
 .team-row.qualifies { background: rgba(65, 180, 255, 0.14); }
 .team-row.third { background: rgba(255, 207, 63, 0.1); }
 .pos { width: 1.6rem; font-size: 0.8rem; color: var(--muted); font-weight: 700; }

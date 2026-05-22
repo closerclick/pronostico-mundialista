@@ -30,14 +30,13 @@ const items = computed<ThirdItem[]>({
     <draggable
       v-model="items"
       item-key="group"
-      handle=".drag"
       :animation="160"
       ghost-class="ghost"
       :disabled="readonly"
       class="thirds-list"
     >
       <template #item="{ element, index }">
-        <div class="third-row" data-testid="third-row" :data-group="element.group" :class="{ in: index < 8, out: index >= 8 }">
+        <div class="third-row" data-testid="third-row" :data-group="element.group" :class="{ in: index < 8, out: index >= 8, grab: !readonly }">
           <span class="rank">{{ index + 1 }}</span>
           <span class="flag">{{ teamById(element.teamId).flag }}</span>
           <span class="name">{{ teamById(element.teamId).name }}</span>
@@ -66,6 +65,8 @@ const items = computed<ThirdItem[]>({
   display: flex; align-items: center; gap: 0.55rem;
   padding: 0.5rem 0.7rem; border-top: 1px solid var(--line);
 }
+.third-row.grab { cursor: grab; }
+.third-row.grab:active { cursor: grabbing; }
 .third-row.in { background: rgba(65, 180, 255, 0.14); }
 .third-row.out { background: rgba(231, 76, 60, 0.08); opacity: 0.7; }
 .rank { width: 1.5rem; text-align: center; font-weight: 700; font-size: 0.8rem; color: var(--muted); }
