@@ -486,33 +486,50 @@ async function doImport () {
   }
 }
 
+// Importa el pronóstico que viene en el #fragmento. Devuelve true si lo importó
+// (o si ya existía y lo seleccionó). Limpia el hash de la URL al terminar.
+async function importFromHash (frag: string): Promise<boolean> {
+  const parsed = await parseShareFragment(frag)
+  history.replaceState(null, '', location.pathname + location.search)
+  if (!parsed) return false
+  try { decodePrediction(parsed.code) } catch { return false }
+  // Si ya tenemos ese pronóstico importado, no duplicamos: lo seleccionamos.
+  const existing = library.value.find((p) => !p.mine && !p.official && p.code === parsed.code)
+  if (existing) {
+    if (parsed.name) existing.name = parsed.name
+    select(existing.id)
+    tab.value = 'llaves'
+    return true
+  }
+  const entry: SavedPrediction = {
+    id: genId(), name: parsed.name || parsed.nickname || t('store.sharedName'),
+    code: parsed.code, updatedAt: Date.now(), mine: false,
+    author: { publickey: parsed.publickey, nickname: parsed.nickname, verified: parsed.verified },
+  }
+  library.value.push(entry)
+  saveLibrary(library.value)
+  select(entry.id)
+  tab.value = 'llaves'
+  return true
+}
+
+// Si el hash cambia estando la app ya cargada (pegar otro link en la misma
+// pestaña no recarga la página), reimportamos.
+async function onHashChange () {
+  const frag = location.hash.replace(/^#/, '')
+  if (frag) await importFromHash(frag)
+}
+
 onMounted(async () => {
   window.addEventListener('beforeinstallprompt', onBeforeInstallPrompt)
   window.addEventListener('appinstalled', onAppInstalled)
+  window.addEventListener('hashchange', onHashChange)
 
   library.value = loadLibrary()
   ensureOfficialEntry()
 
   const frag = location.hash.replace(/^#/, '')
-  if (frag) {
-    const parsed = await parseShareFragment(frag)
-    history.replaceState(null, '', location.pathname + location.search)
-    if (parsed) {
-      try {
-        decodePrediction(parsed.code)
-        const entry: SavedPrediction = {
-          id: genId(), name: parsed.name || parsed.nickname || t('store.sharedName'),
-          code: parsed.code, updatedAt: Date.now(), mine: false,
-          author: { publickey: parsed.publickey, nickname: parsed.nickname, verified: parsed.verified },
-        }
-        library.value.push(entry)
-        saveLibrary(library.value)
-        select(entry.id)
-        tab.value = 'llaves'
-        return
-      } catch { /* cae al flujo normal */ }
-    }
-  }
+  if (frag && await importFromHash(frag)) return
 
   const saved = getActiveId()
   if (saved && library.value.some((p) => p.id === saved)) select(saved)
@@ -523,6 +540,7 @@ onMounted(async () => {
 onUnmounted(() => {
   window.removeEventListener('beforeinstallprompt', onBeforeInstallPrompt)
   window.removeEventListener('appinstalled', onAppInstalled)
+  window.removeEventListener('hashchange', onHashChange)
 })
 </script>
 
