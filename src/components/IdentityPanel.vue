@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { PeerInfo } from '@gatoseya/closer-click-identity'
 import { getIdentity, type IdentityInstance } from '../lib/identity'
 import { buildTrustMap, computeDerivedRating, shortKey } from '../lib/rating'
 import { resolveTokenToIdentity, ProxyTokenError } from '../lib/proxy'
+
+const { t } = useI18n()
 
 const props = defineProps<{ open: boolean; focusPubkey?: string | null }>()
 const emit = defineEmits<{ close: []; changed: [] }>()
@@ -75,19 +78,19 @@ async function addContact () {
   // Normalizamos el token tal como hace el messenger: mayúsculas, sin espacios.
   const token = newToken.value.trim().toUpperCase()
   if (!/^[A-Z0-9]{4,8}$/.test(token)) {
-    addError.value = 'Token inválido (4 a 8 caracteres alfanuméricos, p.ej. A4F2).'
+    addError.value = t('identity.tokenInvalid')
     return
   }
 
   adding.value = true
-  addStatus.value = 'Buscando token…'
+  addStatus.value = t('identity.searchingToken')
   try {
     // Resolvemos el token → identidad real (clave pública) vía el proxy:
     // mandamos un challenge firmado y verificamos la respuesta del peer.
     const resolved = await resolveTokenToIdentity(token, id.value)
 
     if (resolved.publickey === id.value.me?.publickey) {
-      addError.value = 'Ese token es el tuyo.'
+      addError.value = t('identity.tokenIsYours')
       addStatus.value = ''
       return
     }
@@ -101,7 +104,7 @@ async function addContact () {
     })
     newToken.value = ''
     newNick.value = ''
-    addStatus.value = 'Contacto agregado.'
+    addStatus.value = t('identity.contactAdded')
     await refresh()
     emit('changed')
   } catch (e) {
@@ -109,7 +112,7 @@ async function addContact () {
     if (e instanceof ProxyTokenError) {
       addError.value = e.message
     } else {
-      addError.value = 'No se pudo agregar el contacto. Intenta de nuevo.'
+      addError.value = t('identity.addError')
     }
   } finally {
     adding.value = false
@@ -134,29 +137,29 @@ function myRatingOf (p: PeerInfo): number { return p.myRating?.rating ?? 0 }
 <template>
   <div v-if="open" class="overlay" @click.self="emit('close')">
     <div class="panel">
-      <button class="x" @click="emit('close')" aria-label="Cerrar">×</button>
-      <h3>Identidad</h3>
+      <button class="x" @click="emit('close')" :aria-label="t('common.close')">×</button>
+      <h3>{{ t('identity.title') }}</h3>
 
       <nav class="ptabs">
-        <button :class="{ on: tab === 'perfil' }" @click="tab = 'perfil'">Perfil</button>
-        <button :class="{ on: tab === 'contactos' }" @click="tab = 'contactos'">Contactos</button>
-        <button :class="{ on: tab === 'rankings' }" @click="tab = 'rankings'">Rankings</button>
+        <button :class="{ on: tab === 'perfil' }" @click="tab = 'perfil'">{{ t('identity.tabProfile') }}</button>
+        <button :class="{ on: tab === 'contactos' }" @click="tab = 'contactos'">{{ t('identity.tabContacts') }}</button>
+        <button :class="{ on: tab === 'rankings' }" @click="tab = 'rankings'">{{ t('identity.tabRankings') }}</button>
       </nav>
 
-      <p v-if="unreachable" class="warn">
-        No se pudo conectar al vault <code>id.closer.click</code>. Revisa tu conexión.
-      </p>
+      <i18n-t v-if="unreachable" keypath="identity.unreachable" tag="p" class="warn" scope="global">
+        <template #vault><code>id.closer.click</code></template>
+      </i18n-t>
 
       <!-- PERFIL -->
       <section v-show="tab === 'perfil'" class="body">
-        <label class="lbl">Tu apodo (firma tus pronósticos)</label>
+        <label class="lbl">{{ t('identity.nickLabel') }}</label>
         <div class="row">
-          <input v-model="nickDraft" maxlength="40" placeholder="Tu nombre visible" @keydown.stop />
+          <input v-model="nickDraft" maxlength="40" :placeholder="t('identity.nickPlaceholder')" @keydown.stop />
           <button class="go" :disabled="savingNick || nickDraft.trim() === myNick" @click="saveNick">
-            {{ savingNick ? '…' : 'Guardar' }}
+            {{ savingNick ? '…' : t('common.save') }}
           </button>
         </div>
-        <p class="hint">Con este nombre aparecerán firmados los pronósticos que compartas.</p>
+        <p class="hint">{{ t('identity.nickHint') }}</p>
       </section>
 
       <!-- CONTACTOS -->
@@ -166,26 +169,25 @@ function myRatingOf (p: PeerInfo): number { return p.myRating?.rating ?? 0 }
             v-model="newToken"
             class="token"
             maxlength="8"
-            placeholder="Token (ej. A4F2)"
+            :placeholder="t('identity.tokenPlaceholder')"
             :disabled="adding"
             @keydown.stop
             @keyup.enter="addContact"
           />
-          <input v-model="newNick" placeholder="Apodo (opcional)" :disabled="adding" @keydown.stop />
+          <input v-model="newNick" :placeholder="t('identity.nickOptional')" :disabled="adding" @keydown.stop />
           <button class="go" :disabled="adding || !newToken.trim()" @click="addContact">
-            {{ adding ? 'Buscando…' : 'Agregar contacto' }}
+            {{ adding ? t('identity.searching') : t('identity.addContact') }}
           </button>
           <p v-if="addStatus" class="status">{{ addStatus }}</p>
           <p v-if="addError" class="err">{{ addError }}</p>
-          <p class="hint">
-            Pide a tu contacto su <strong>token</strong> (la dirección corta que
-            le asigna el proxy). Debe estar conectado para verificar su identidad.
-          </p>
+          <i18n-t keypath="identity.addContactHint" tag="p" class="hint" scope="global">
+            <template #token><strong>{{ t('identity.tokenWord') }}</strong></template>
+          </i18n-t>
         </div>
-        <p v-if="!contacts.length" class="empty">Aún no tienes contactos.</p>
+        <p v-if="!contacts.length" class="empty">{{ t('identity.noContacts') }}</p>
         <div v-for="c in contacts" :key="c.publickey" class="contact">
           <div class="ci">
-            <span class="nm">{{ c.nickname || 'Sin apodo' }}</span>
+            <span class="nm">{{ c.nickname || t('identity.noNick') }}</span>
             <span class="mono sm">{{ shortKey(c.publickey) }}</span>
           </div>
           <div class="stars">
@@ -197,23 +199,23 @@ function myRatingOf (p: PeerInfo): number { return p.myRating?.rating ?? 0 }
               @click="rate(c.publickey, n === myRatingOf(c) ? 0 : n)"
             >★</button>
           </div>
-          <button class="del" title="Eliminar" @click="removeContact(c.publickey)">🗑</button>
+          <button class="del" :title="t('common.delete')" @click="removeContact(c.publickey)">🗑</button>
         </div>
       </section>
 
       <!-- RANKINGS -->
       <section v-show="tab === 'rankings'" class="body">
-        <p class="hint">Reputación combinada: la tuya manda; si no, promedio ponderado por tu confianza.</p>
-        <p v-if="!ranking.length" class="empty">Sin valoraciones todavía.</p>
+        <p class="hint">{{ t('identity.rankingsHint') }}</p>
+        <p v-if="!ranking.length" class="empty">{{ t('identity.noRatings') }}</p>
         <div v-for="(x, i) in ranking" :key="x.peer.publickey" class="rank-row">
           <span class="pos">{{ i + 1 }}</span>
           <div class="ci">
-            <span class="nm">{{ x.peer.nickname || 'Anónimo' }}</span>
+            <span class="nm">{{ x.peer.nickname || t('identity.anon') }}</span>
             <span class="mono sm">{{ shortKey(x.peer.publickey) }}</span>
           </div>
           <span class="score">
             {{ x.r.value!.toFixed(1) }} <span class="star on">★</span>
-            <small>{{ x.r.source === 'mine' ? 'tuya' : `×${x.r.count}` }}</small>
+            <small>{{ x.r.source === 'mine' ? t('identity.sourceMine') : `×${x.r.count}` }}</small>
           </span>
         </div>
       </section>

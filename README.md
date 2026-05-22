@@ -27,87 +27,112 @@ El eje del ecosistema **[CloserClick](https://closer.click)** es el **autohosteo
 
 App cliente (Vue 3 + Vite + TS, PWA) para armar **varios** pronósticos del
 **Mundial 2026** (48 selecciones, sorteo final del 5 dic 2025), firmarlos con tu
-identidad y compartirlos por QR / redes / PDF. Tema visual "estadio nocturno"
-(azul) con tipografía Anton + Hanken Grotesk. Diseño responsive (móvil y
-escritorio con barra lateral fija).
+identidad y compartirlos por QR / redes / PDF. Bilingüe **ES/EN**, tema visual
+"estadio nocturno" (azul, tipografías Anton + Hanken Grotesk), responsive (móvil
+y escritorio con barra lateral fija).
 
-### Fase de grupos
-- 12 grupos (A–L) con banderas; **arrastra** cada equipo a su posición (1º–4º).
-- 1º y 2º clasifican directo; el bloque **Mejores terceros** lista los 12
-  terceros para ordenarlos: los **8 de arriba** clasifican a dieciseisavos.
+### Tres modos de juego (por pronóstico)
+- **Simple** — ordenás a mano la tabla de cada grupo (arrastrar) y el ranking de
+  los 12 terceros (los 8 mejores clasifican). No se cargan resultados.
+- **Medio** — marcás **gana/empata/pierde** de cada partido de grupo; las
+  posiciones se **calculan** (puntos → enfrentamiento directo → orden de sorteo).
+- **Completo** — cargás el **marcador** (goles) de cada partido; las posiciones
+  se calculan con diferencia de gol y goles a favor.
+
+En Medio/Completo aparece la pestaña **Resultados** (carga de partidos) y la
+pestaña Grupos muestra la tabla calculada (solo lectura). Un botón **Confirmar
+cambios** aplica las posiciones a las llaves (invalidando en cascada los picks
+afectados); en Simple, confirmar aparece cuando el reordenado afecta las llaves.
 
 ### Llaves
-- Formato **simétrico** (mitades izquierda/derecha hacia la final central con
-  trofeo). Cada cupo muestra **bandera + código de país** (los vacíos, su
-  etiqueta: `1.º A`, `Gan. 89`, …).
-- Dieciseisavos se llenan con los clasificados de grupos; las rondas siguientes
-  arrancan **vacías** y se llenan al tocar quién avanza (tocar de nuevo vacía).
-  Se puede elegir ganador **aunque el rival aún esté vacío**.
-- Al cambiar la fase de grupos, los picks afectados se **invalidan en cascada**.
-- Numeración oficial (dieciseisavos 73–88 … final 104) + partido por el 3.º.
+- Formato **simétrico** con la final al centro y trofeo, y **líneas conectoras**
+  que unen cada partido con la ronda siguiente. Cada cupo muestra bandera +
+  **código de país**; los vacíos, su etiqueta (`1.º A`, `Gan. 89`, …).
+- Dieciseisavos se llenan con los clasificados; las rondas siguientes se llenan
+  al elegir quién avanza (se puede elegir aunque el rival esté vacío).
+- En Medio/Completo, un cupo solo se completa cuando la posición ya es **segura**
+  según lo cargado; si no, queda en placeholder (no se "adivina").
+
+### Resultados oficiales y puntuación
+- En la barra lateral hay una entrada especial **"Resultados"** (los oficiales
+  del torneo): **no es un pronóstico**, solo se cargan los marcadores; las
+  posiciones y llaves se derivan solas. Utilidades: **Aleatorio**, **Borrar
+  todos**, **Obtener oficial** (simulado hasta que empiece el Mundial).
+- En eliminatorias el que avanza lo decide el **marcador**; si hay empate,
+  aparecen casilleros de **penales**.
+- Cada pronóstico se **puntúa** contra los resultados oficiales (chip de puntos
+  en la barra lateral). Solo cuenta lo **cierto**: posiciones aseguradas (+3 c/u),
+  aciertos de llaves por ronda (R32 +4 … final/campeón +20, 3.º +5), acierto
+  1/–/2 por partido (+1, Medio y Completo) y marcador exacto (+2, solo Completo).
+  El panel **"¿Cómo se puntúa?"** lo explica con pestañas por modo.
 
 ### Multi-pronóstico + identidad
-- Barra lateral con **mis pronósticos** (editables) e **importados** (de otras
-  personas, solo lectura). Crear, renombrar, eliminar, duplicar.
+- **Mis pronósticos** (editables), **Pronósticos amigos** (importados, solo
+  lectura) y **Resultados** (oficiales). Crear, renombrar, eliminar, duplicar.
 - **Mi identidad** (vault `id.closer.click` vía `@gatoseya/closer-click-identity`):
-  perfil (apodo que firma), **contactos** (se agregan por **token** corto del
-  proxy, resuelto con un challenge/response firmado) y **rankings** (reputación
-  web-of-trust, valoración por estrellas).
+  perfil (apodo que firma), **contactos** por **token** corto del proxy (resuelto
+  con challenge/response firmado) y **rankings** (web-of-trust, estrellas).
 
 ### Compartir / exportar
-- El pronóstico completo se codifica en una cadena **base64url** (permutaciones
-  de grupos + ranking de terceros + 2 bits por llave, empaquetados a bit).
-- Se **firma con ECDSA P-256** y se arma `https://mundial.closer.click/#<payload>`
-  mostrado como **QR**. Al abrir un enlace, la app **verifica la firma** y
-  muestra al autor (que puedes agregar a contactos / valorar).
-- Botones de **redes** (WhatsApp, Telegram, X, Facebook, Instagram vía Web Share API).
-- **Imprimir** y **Descargar PDF** (una sola hoja **A4 vertical**: grupos +
-  llaves + QR firmado, vía `html2canvas` + `jspdf`).
+- El pronóstico se codifica COMPLETO en una cadena **base64url** (codec v3:
+  modo + posiciones + ranking de terceros + ganadores de llaves + resultados con
+  goles y penales) — todo lo necesario para **reconstruirlo desde el link**.
+- Se **firma con ECDSA P-256**, se arma `https://mundial.closer.click/#<payload>`
+  y se muestra como **QR**. Al importar/abrir un enlace se **verifica la firma**.
+- Botones de **redes** (WhatsApp, Telegram, X, Facebook, Instagram/Web Share API).
+- **Imprimir** y **Descargar PDF** en una hoja **A4** (plantilla distinta por
+  modo) con el QR firmado, vía `html2canvas` + `jspdf`.
 
 ### PWA
 - Instalable; iconos y favicon generados desde `images/logo.svg`
   (`scripts/gen-icons.mjs`, corre en cada build).
-- **En desarrollo** el service worker es `selfDestroying` (sin caché: siempre
-  contenido fresco). Para producción, quitar `selfDestroying` en `vite.config.ts`
-  para reactivar la instalación de la PWA.
+- **En desarrollo** el service worker es `selfDestroying` (sin caché). Para
+  producción, quitar `selfDestroying` en `vite.config.ts` para reactivar la PWA.
 
 ## Estructura
 
 ```
-images/logo.svg          fuente única de iconos/favicon del PWA
+images/logo.svg           fuente única de iconos/favicon del PWA
 scripts/gen-icons.mjs     genera icons + favicon desde el SVG
 src/
+├── i18n.ts             vue-i18n (ES/EN) + selector de idioma
 ├── lib/
 │   ├── teams.ts        48 equipos (grupos A–L, bandera, código FIFA, id estable)
 │   ├── bracket.ts      estructura R32→final + asignación de mejores terceros
-│   ├── prediction.ts   estado, resolución por partido, prune en cascada
-│   ├── codec.ts        encode/decode compacto (Lehmer + bits + base64url)
+│   ├── standings.ts    cálculo de tabla por resultados + posiciones "seguras"
+│   ├── prediction.ts   estado, resolución por partido (certeza), prune en cascada
+│   ├── codec.ts        encode/decode compacto v3 (Lehmer + bits + base64url)
+│   ├── scoring.ts      puntuación de un pronóstico vs resultados oficiales
 │   ├── identity.ts     singleton del vault id.closer.click
 │   ├── share.ts        firma/verificación ECDSA y enlace de compartir
 │   ├── proxy.ts        resolver token→identidad (challenge firmado por el proxy)
 │   ├── rating.ts       reputación derivada (web-of-trust)
 │   └── store.ts        librería de pronósticos en localStorage
 ├── components/
-│   ├── GroupCard.vue / ThirdsBlock.vue   grupos + terceros arrastrables
-│   ├── BracketTab.vue / MatchBox.vue     llaves simétricas clicables
-│   ├── Sidebar.vue        librería de pronósticos + acciones
+│   ├── GroupCard.vue / ThirdsBlock.vue   grupos + terceros arrastrables (Simple)
+│   ├── StandingsTable.vue                 tabla calculada (Medio/Completo)
+│   ├── ResultsTab.vue                     carga de resultados (grupos + llaves)
+│   ├── BracketTab.vue / MatchBox.vue      llaves simétricas con conectores
+│   ├── Sidebar.vue        librería + acciones + puntajes
 │   ├── ShareModal.vue     QR + redes + imprimir/PDF
+│   ├── ScoringInfo.vue    panel "¿Cómo se puntúa?" (pestañas por modo)
 │   ├── IdentityPanel.vue  perfil / contactos / rankings
-│   └── PrintView.vue      hoja imprimible/PDF A4 portrait
-└── App.vue              cabecera, pestañas, carga desde #hash, impresión/PDF
+│   └── PrintView.vue      hoja imprimible/PDF A4 (plantilla por modo)
+└── App.vue              cabecera, modos, pestañas, carga desde #hash, impresión
 ```
 
 > Nota: la asignación de los 8 mejores terceros usa un emparejamiento
 > determinista que respeta los grupos permitidos por cada cruce. Aproxima el
 > anexo oficial de la FIFA (la combinación de 8 grupos determina los cruces).
 
-## Build
+## Build y tests
 
 ```bash
 ./build.sh         # instala deps si falta y compila a dist/
-# o: npm install && npm run build
-npm run dev        # desarrollo
+npm run dev        # desarrollo (http://localhost:5173)
 npm run typecheck  # vue-tsc
+npm run lint:fix   # eslint
+npm run test:e2e   # Playwright (incluye round-trip "reconstruir desde el link")
 ```
 
 Deploy a GitHub Pages (dominio `mundial.closer.click`) vía GitHub Actions en

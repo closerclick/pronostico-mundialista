@@ -1,23 +1,27 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import draggable from 'vuedraggable'
 import { teamById, type Team } from '../lib/teams'
 import type { Prediction } from '../lib/prediction'
 
+const { t } = useI18n()
+
 const props = defineProps<{ pred: Prediction; group: number; letter: string; readonly?: boolean }>()
 
-// v-model bidireccional: lee/escribe el orden de team ids del grupo.
+// v-model bidireccional: lee/escribe el orden de team ids del grupo en el
+// BORRADOR (las posiciones confirmadas solo cambian al "Confirmar cambios").
 const teams = computed<Team[]>({
-  get: () => props.pred.groupOrder[props.group]!.map(teamById),
-  set: (list) => { props.pred.groupOrder[props.group] = list.map((t) => t.id) },
+  get: () => props.pred.draftGroupOrder[props.group]!.map(teamById),
+  set: (list) => { props.pred.draftGroupOrder[props.group] = list.map((t) => t.id) },
 })
 
 const POS = ['1º', '2º', '3º', '4º']
 </script>
 
 <template>
-  <div class="group-card">
-    <div class="group-head">Grupo {{ letter }}</div>
+  <div class="group-card" data-testid="group-card" :data-letter="letter">
+    <div class="group-head">{{ t('group.title', { letter }) }}</div>
     <draggable
       v-model="teams"
       item-key="id"
@@ -28,11 +32,11 @@ const POS = ['1º', '2º', '3º', '4º']
       class="team-list"
     >
       <template #item="{ element, index }">
-        <div class="team-row" :class="{ qualifies: index < 2, third: index === 2 }">
+        <div class="team-row" data-testid="team-row" :data-team-id="element.id" :class="{ qualifies: index < 2, third: index === 2 }">
           <span class="pos">{{ POS[index] }}</span>
           <span class="flag">{{ element.flag }}</span>
           <span class="name">{{ element.name }}</span>
-          <span v-if="!readonly" class="drag" aria-label="Reordenar">⋮⋮</span>
+          <span v-if="!readonly" class="drag" :aria-label="t('common.reorder')">⋮⋮</span>
         </div>
       </template>
     </draggable>

@@ -5,10 +5,14 @@
 // papel (blanco/oscuro, sin sombras) para guardar como PDF desde el navegador.
 // En pantalla queda oculto; solo se muestra al imprimir (ver @media print).
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { GROUPS, GROUP_LETTERS, teamById } from '../lib/teams'
 import {
   resolveMatches, qualifiedThirdGroups, type Prediction, type ResolvedMatch,
 } from '../lib/prediction'
+import {
+  groupStandingsTable, GROUP_PAIRS, groupMatchIndex, teamAt,
+} from '../lib/standings'
 import { R32, R16, QF, SF, FINAL, THIRD_PLACE, type Slot } from '../lib/bracket'
 
 const props = defineProps<{
@@ -21,6 +25,8 @@ const props = defineProps<{
   capture?: boolean
 }>()
 
+const { t } = useI18n()
+
 const resolved = computed(() => resolveMatches(props.pred))
 function m (num: number): ResolvedMatch | undefined { return resolved.value.get(num) }
 
@@ -32,9 +38,9 @@ const laterFrom = new Map<number, [number, number]>(
 )
 
 function slotLabel (slot: Slot): string {
-  if (slot.kind === 'W') return '1.º ' + GROUP_LETTERS[slot.group]
-  if (slot.kind === 'RU') return '2.º ' + GROUP_LETTERS[slot.group]
-  return '3.º'
+  if (slot.kind === 'W') return t('bracket.winnerOf', { letter: GROUP_LETTERS[slot.group] })
+  if (slot.kind === 'RU') return t('bracket.runnerUpOf', { letter: GROUP_LETTERS[slot.group] })
+  return t('bracket.thirdSlot')
 }
 
 // Cada cupo de un partido: equipo resuelto (bandera + código) o etiqueta.
@@ -51,10 +57,10 @@ function cell (num: number, top: boolean): CellView {
   let label = ''
   const r32 = r32Slots.get(num)
   if (r32) label = slotLabel(top ? r32.home : r32.away)
-  else if (num === THIRD_PLACE.num) label = 'Perd. SF'
+  else if (num === THIRD_PLACE.num) label = t('bracket.loserSFShort')
   else {
     const from = laterFrom.get(num)
-    if (from) label = 'Gan. ' + from[top ? 0 : 1]
+    if (from) label = t('bracket.winnerNum', { n: from[top ? 0 : 1] })
   }
   return { code: '', flag: '', label, picked: false }
 }
@@ -65,28 +71,39 @@ function match (num: number): MatchView {
 }
 
 // Mismo armado simétrico que BracketTab.vue.
-const leftCols = [
-  { title: '16avos', nums: [74, 77, 73, 75, 83, 84, 81, 82] },
-  { title: 'Octavos', nums: [89, 90, 93, 94] },
-  { title: 'Cuartos', nums: [97, 98] },
-  { title: 'Semis', nums: [101] },
-].map((c) => ({ title: c.title, matches: c.nums.map(match) }))
+const leftCols = computed(() => [
+  { titleKey: 'bracket.r32Short', nums: [74, 77, 73, 75, 83, 84, 81, 82] },
+  { titleKey: 'bracket.r16Short', nums: [89, 90, 93, 94] },
+  { titleKey: 'bracket.qfShort', nums: [97, 98] },
+  { titleKey: 'bracket.sfShort', nums: [101] },
+].map((c) => ({ title: t(c.titleKey), matches: c.nums.map(match) })))
 
-const rightCols = [
-  { title: 'Semis', nums: [102] },
-  { title: 'Cuartos', nums: [99, 100] },
-  { title: 'Octavos', nums: [91, 92, 95, 96] },
-  { title: '16avos', nums: [76, 78, 79, 80, 86, 88, 85, 87] },
-].map((c) => ({ title: c.title, matches: c.nums.map(match) }))
+const rightCols = computed(() => [
+  { titleKey: 'bracket.sfShort', nums: [102] },
+  { titleKey: 'bracket.qfShort', nums: [99, 100] },
+  { titleKey: 'bracket.r16Short', nums: [91, 92, 95, 96] },
+  { titleKey: 'bracket.r32Short', nums: [76, 78, 79, 80, 86, 88, 85, 87] },
+].map((c) => ({ title: t(c.titleKey), matches: c.nums.map(match) })))
 
 const finalMatch = computed(() => match(FINAL.num))
 const thirdMatch = computed(() => match(THIRD_PLACE.num))
 const championId = computed(() => m(FINAL.num)?.winner ?? null)
 const champion = computed(() => (championId.value != null ? teamById(championId.value) : null))
 
+// Etiqueta del modo de juego para el encabezado.
+const modeLabel = computed(() => {
+  switch (props.pred.mode) {
+    case 'winlose': return t('modes.medium')
+    case 'score': return t('modes.full')
+    default: return t('modes.simple')
+  }
+})
+
 // Grilla de grupos: orden pronosticado con marca de clasificados (1.º, 2.º) y
 // de los terceros que clasifican (8 mejores).
 const qualifiedThirds = computed(() => new Set(qualifiedThirdGroups(props.pred)))
+
+// --- Modo SIMPLE (manual): solo orden de posiciones, sin puntos. ---
 const groupViews = computed(() =>
   GROUPS.map((g, gi) => ({
     letter: g.letter,
@@ -98,6 +115,52 @@ const groupViews = computed(() =>
     }),
   })),
 )
+
+// --- Modos MEDIO (winlose) y COMPLETO (score): tabla calculada por resultados. ---
+// Filas de posiciones con Pts (y DG/GF en 'score'), más los 6 resultados del grupo.
+interface StandRow {
+  pos: number; code: string; flag: string; name: string
+  pts: number; gd: number; gf: number; qualifies: boolean; third: boolean
+}
+interface ResultRow { home: string; away: string; sign: string; score: string }
+interface GroupResultView { letter: string; rows: StandRow[]; results: ResultRow[] }
+
+const showGoals = computed(() => props.pred.mode === 'score')
+
+// Signo 1/–/2 a partir del campo `o` (o, si hay goles en 'score', del marcador).
+function signOf (o: 0 | 1 | 2): string {
+  return o === 0 ? '1' : o === 2 ? '2' : '–'
+}
+
+const groupResultViews = computed<GroupResultView[]>(() =>
+  GROUPS.map((g, gi) => {
+    const table = groupStandingsTable(gi, props.pred.results, props.pred.mode)
+    const rows: StandRow[] = table.map((s, pos) => {
+      const t = teamById(s.teamId)
+      const qualifies = pos < 2 || (pos === 2 && qualifiedThirds.value.has(gi))
+      return {
+        pos: pos + 1, code: t.code, flag: t.flag, name: t.name,
+        pts: s.pts, gd: s.gd, gf: s.gf, qualifies, third: pos === 2,
+      }
+    })
+    // Los 6 partidos del grupo por posición de sorteo.
+    const results: ResultRow[] = GROUP_PAIRS.map(([a, b], pair) => {
+      const r = props.pred.results[groupMatchIndex(gi, pair)]
+      const home = teamById(teamAt(gi, a)).code
+      const away = teamById(teamAt(gi, b)).code
+      if (!r) return { home, away, sign: '–', score: '–' }
+      // En 'score' con goles cargados el signo deriva del marcador.
+      let o: 0 | 1 | 2 = r.o
+      let score = '–'
+      if (showGoals.value && typeof r.gh === 'number' && typeof r.ga === 'number') {
+        o = r.gh > r.ga ? 0 : r.gh < r.ga ? 2 : 1
+        score = r.gh + '-' + r.ga
+      }
+      return { home, away, sign: signOf(o), score }
+    })
+    return { letter: g.letter, rows, results }
+  }),
+)
 </script>
 
 <template>
@@ -105,18 +168,20 @@ const groupViews = computed(() =>
     <header class="ph">
       <div class="ph-titles">
         <h1>{{ title }}</h1>
-        <p v-if="author" class="ph-author">por {{ author }}</p>
+        <p v-if="author" class="ph-author">{{ t('print.author', { author }) }}</p>
       </div>
-      <div class="ph-event">Mundial 2026 · 48 selecciones</div>
+      <div class="ph-event">{{ t('print.event') }}<span class="ph-mode">{{ modeLabel }}</span></div>
     </header>
 
     <div class="body">
-      <!-- Fase de grupos -->
-      <section class="groups">
-        <h2>Fase de grupos</h2>
-        <div class="groups-grid">
+      <!-- Fase de grupos: template DIFERENTE según el modo de juego. -->
+      <section class="groups" :class="{ 'with-goals': pred.mode === 'score' }">
+        <h2>{{ t('print.groups') }}</h2>
+
+        <!-- Modo SIMPLE (manual): solo el orden, sin puntos. -->
+        <div v-if="pred.mode === 'manual'" class="groups-grid">
           <div v-for="g in groupViews" :key="g.letter" class="g-card">
-            <div class="g-head">Grupo {{ g.letter }}</div>
+            <div class="g-head">{{ t('group.title', { letter: g.letter }) }}</div>
             <div
               v-for="r in g.rows"
               :key="r.code"
@@ -130,15 +195,57 @@ const groupViews = computed(() =>
             </div>
           </div>
         </div>
+
+        <!-- Modos MEDIO (winlose) y COMPLETO (score): tabla calculada + resultados. -->
+        <div v-else class="groups-grid">
+          <div v-for="g in groupResultViews" :key="g.letter" class="g-card">
+            <div class="g-head">
+              <span>{{ t('group.title', { letter: g.letter }) }}</span>
+              <span class="g-cols">
+                <span class="g-th">{{ t('standings.pts') }}</span>
+                <template v-if="showGoals">
+                  <span class="g-th">{{ t('standings.gd') }}</span>
+                  <span class="g-th">{{ t('standings.gf') }}</span>
+                </template>
+              </span>
+            </div>
+            <div
+              v-for="r in g.rows"
+              :key="r.code"
+              class="g-row res"
+              :class="{ q: r.qualifies, t3: r.third }"
+            >
+              <span class="g-pos">{{ r.pos }}</span>
+              <span class="g-flag">{{ r.flag }}</span>
+              <span class="g-code">{{ r.code }}</span>
+              <span class="g-stat pts">{{ r.pts }}</span>
+              <template v-if="showGoals">
+                <span class="g-stat">{{ r.gd > 0 ? '+' + r.gd : r.gd }}</span>
+                <span class="g-stat">{{ r.gf }}</span>
+              </template>
+            </div>
+            <!-- Mini-grilla con los 6 partidos del grupo. -->
+            <div class="g-results">
+              <span
+                v-for="(rr, ri) in g.results"
+                :key="ri"
+                class="g-res"
+              >
+                {{ rr.home }} <b>{{ showGoals ? rr.score : rr.sign }}</b> {{ rr.away }}
+              </span>
+            </div>
+          </div>
+        </div>
+
         <p class="legend">
-          <span class="sw q"></span> Clasifican directo (1.º, 2.º)
-          <span class="sw t3"></span> Mejor tercero clasificado
+          <span class="sw q"></span> {{ t('print.legendDirect') }}
+          <span class="sw t3"></span> {{ t('print.legendThird') }}
         </p>
       </section>
 
       <!-- Llaves -->
       <section class="bracket">
-        <h2>Llaves</h2>
+        <h2>{{ t('print.bracket') }}</h2>
         <div class="board">
           <div v-for="(col, ci) in leftCols" :key="'l' + ci" class="col">
             <span class="col-title">{{ col.title }}</span>
@@ -162,7 +269,7 @@ const groupViews = computed(() =>
 
           <!-- Centro: final + campeón + 3er puesto -->
           <div class="col center">
-            <span class="trophy">🏆</span>
+            <span class="trophy" :title="t('bracket.champion')">🏆</span>
             <div class="mbox big">
               <div class="side" :class="{ picked: finalMatch.top.picked, empty: !finalMatch.top.code }">
                 <template v-if="finalMatch.top.code">
@@ -178,10 +285,10 @@ const groupViews = computed(() =>
               </div>
             </div>
             <div v-if="champion" class="champ">
-              Campeón: <strong>{{ champion.flag }} {{ champion.name }}</strong>
+              {{ t('print.champion') }} <strong>{{ champion.flag }} {{ champion.name }}</strong>
             </div>
             <div class="third">
-              <span class="col-title">3.º puesto</span>
+              <span class="col-title">{{ t('bracket.thirdPlace') }}</span>
               <div class="mbox">
                 <div class="side" :class="{ picked: thirdMatch.top.picked, empty: !thirdMatch.top.code }">
                   <template v-if="thirdMatch.top.code">
@@ -223,9 +330,9 @@ const groupViews = computed(() =>
     </div>
 
     <footer class="pf">
-      <img v-if="qrDataUrl" :src="qrDataUrl" alt="QR del pronóstico" class="qr" />
+      <img v-if="qrDataUrl" :src="qrDataUrl" :alt="t('print.qrAlt')" class="qr" />
       <div class="pf-text">
-        <p class="pf-scan">Escanea para ver/editar en</p>
+        <p class="pf-scan">{{ t('print.scan') }}</p>
         <p class="pf-url">mundial.closer.click</p>
       </div>
     </footer>
@@ -272,6 +379,7 @@ const groupViews = computed(() =>
 .ph-titles h1 { font-size: 14pt; margin: 0; color: #111; }
 .ph-author { font-size: 8pt; margin: 0; color: #444; }
 .ph-event { font-size: 8pt; font-weight: 700; letter-spacing: 0.05em; color: #444; }
+.ph-mode { color: #07408a; }
 
 /* Portrait: apilamos verticalmente (grupos arriba, llaves debajo). */
 .body { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
@@ -297,6 +405,29 @@ h2 {
 .g-flag { font-size: 7pt; line-height: 1; }
 .g-code { font-weight: 700; width: 22px; }
 .g-name { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+/* Modos Medio/Completo: cabecera con columnas de estadística y filas con Pts. */
+.g-head { display: flex; align-items: center; justify-content: space-between; }
+.g-cols { display: inline-flex; gap: 0; }
+.g-th { width: 16px; text-align: center; font-size: 5pt; color: #555; font-weight: 700; }
+.g-row.res .g-code { flex: 1; width: auto; }
+.g-stat { width: 16px; text-align: center; font-size: 6pt; }
+.g-stat.pts { font-weight: 700; }
+
+/* Mini-grilla de los 6 resultados del grupo (signo 1/X/2 o marcador gh-ga). */
+.g-results {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 0 4px;
+  padding: 1px 3px 2px; border-top: 1px solid #eee;
+}
+.g-res {
+  font-size: 5pt; color: #555; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.g-res b { color: #111; font-size: 5.5pt; }
+
+/* En modo Completo hay más datos: compactamos un poco más. */
+.groups.with-goals .g-row.res { font-size: 5.5pt; padding: 0.3px 3px; }
+.groups.with-goals .g-results { gap: 0 3px; }
 
 .legend { font-size: 5.5pt; color: #555; margin: 3px 0 0; display: flex; align-items: center; gap: 4px; }
 .legend .sw { width: 9px; height: 9px; display: inline-block; border: 1px solid #aaa; border-radius: 2px; }

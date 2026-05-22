@@ -1,31 +1,44 @@
 <script setup lang="ts">
 import { reactive, ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { setLocale, type Locale } from './i18n'
 import { GROUPS, teamById } from './lib/teams'
-import { defaultPrediction, clonePrediction, champion, prunePicks, type Prediction } from './lib/prediction'
+import {
+  defaultPrediction, clonePrediction, champion, prunePicks,
+  confirmStandings, hasPendingChanges, type Prediction,
+} from './lib/prediction'
+import type { GameMode } from './lib/standings'
 import { encodePrediction, decodePrediction } from './lib/codec'
 import { parseShareFragment, buildShareUrl } from './lib/share'
 import {
   loadLibrary, saveLibrary, getActiveId, setActiveId, genId, type SavedPrediction,
 } from './lib/store'
 import GroupCard from './components/GroupCard.vue'
+import StandingsTable from './components/StandingsTable.vue'
+import ResultsTab from './components/ResultsTab.vue'
 import ThirdsBlock from './components/ThirdsBlock.vue'
 import BracketTab from './components/BracketTab.vue'
+import ScoresTab from './components/ScoresTab.vue'
 import ShareModal from './components/ShareModal.vue'
 import PrintView from './components/PrintView.vue'
 import Sidebar from './components/Sidebar.vue'
+import ScoringInfo from './components/ScoringInfo.vue'
 import QRCode from 'qrcode'
 import IdentityPanel from './components/IdentityPanel.vue'
 import jsPDF from 'jspdf'
 import html2canvas from 'html2canvas'
 
+const { t, locale } = useI18n()
+
 const library = ref<SavedPrediction[]>([])
 const activeId = ref<string | null>(null)
 const pred = reactive<Prediction>(defaultPrediction())
-const tab = ref<'grupos' | 'llaves'>('grupos')
+const tab = ref<'grupos' | 'resultados' | 'llaves' | 'puntajes'>('grupos')
 const sidebarOpen = ref(false)
 const shareOpen = ref(false)
 const shareEntryId = ref<string | null>(null)
 const identityOpen = ref(false)
+const scoringOpen = ref(false)
 const identityFocus = ref<string | null>(null)
 const importOpen = ref(false)
 const importText = ref('')
@@ -60,15 +73,45 @@ async function installApp () {
     canInstall.value = false
     return
   }
-  if (isIOS) alert('Para instalar: pulsa el botón Compartir y luego "Añadir a pantalla de inicio".')
-  else alert('Usa el menú de tu navegador para instalar la app.')
+  if (isIOS) alert(t('install.ios'))
+  else alert(t('install.other'))
 }
 
 let loading = false // evita persistir mientras cargamos un pronóstico
 
 const activeEntry = computed(() => library.value.find((p) => p.id === activeId.value) ?? null)
 const readonly = computed(() => (activeEntry.value ? !activeEntry.value.mine : false))
+// La entrada de RESULTADOS oficiales NO es un pronóstico: solo se cargan los
+// marcadores de los partidos; sin modos, sin "Confirmar", sin arrastre. Las
+// posiciones y llaves se derivan solas de los resultados.
+const isOfficial = computed(() => !!activeEntry.value?.official)
+// Entrada de resultados oficiales (base de comparación para los puntajes).
+const officialEntry = computed(() => library.value.find((p) => p.official) ?? null)
 const championId = computed(() => champion(pred))
+
+// --- Modo de juego y resultados --------------------------------------------
+// Cambia el modo de juego. Si se vuelve a 'manual' estando en la pestaña de
+// resultados, regresamos a "Fase de grupos" (esa pestaña se oculta en manual).
+function setMode (m: GameMode) {
+  if (readonly.value || pred.mode === m) return
+  pred.mode = m
+  // Al pasar a manual, el borrador arranca desde lo confirmado (no arrastra uno viejo).
+  if (m === 'manual') {
+    pred.draftGroupOrder = pred.groupOrder.map((a) => [...a])
+    pred.draftThirdsRank = [...pred.thirdsRank]
+    if (tab.value === 'resultados') tab.value = 'grupos'
+  }
+}
+
+// ¿Hay resultados sin confirmar? (solo aplica en winlose/score). Reactivo: el
+// watch profundo de `pred` reevalúa este computed al cambiar resultados/modo.
+const pending = computed(() => hasPendingChanges(pred))
+
+// Aplica los resultados a las posiciones confirmadas y poda las llaves.
+function confirmChanges () {
+  if (readonly.value) return
+  confirmStandings(pred) // persiste vía el watch profundo de `pred`
+}
 
 // Código a firmar/compartir: el del pronóstico elegido en la barra lateral
 // (o el activo si se comparte sin elegir).
@@ -99,7 +142,15 @@ function predForEntry (id: string | null): Prediction | null {
   const entry = library.value.find((p) => p.id === id)
   if (!entry) return clonePrediction(pred)
   if (entry.id === activeId.value) return clonePrediction(pred)
-  try { return decodePrediction(entry.code) } catch { return null }
+  // Para un pronóstico NO activo, el código solo trae posiciones/llaves; le
+  // adjuntamos modo y resultados locales del entry para que PrintView elija el
+  // template correcto (Simple/Medio/Completo) y muestre puntos/marcadores.
+  try {
+    const p = decodePrediction(entry.code)
+    if (entry.mode) p.mode = entry.mode
+    if (entry.results) p.results = JSON.parse(JSON.stringify(entry.results))
+    return p
+  } catch { return null }
 }
 
 // Disparado por ShareModal con la URL firmada ya armada: generamos el QR de esa
@@ -108,7 +159,7 @@ async function handlePrint (url: string) {
   const entry = library.value.find((p) => p.id === shareEntryId.value)
   printPred.value = predForEntry(shareEntryId.value)
   if (!printPred.value) return
-  printTitle.value = entry?.name || activeEntry.value?.name || 'Pronóstico Mundial 2026'
+  printTitle.value = entry?.name || activeEntry.value?.name || t('store.defaultTitle')
   printAuthor.value = entry?.author?.nickname ?? activeEntry.value?.author?.nickname
   printQr.value = await QRCode.toDataURL(url, { margin: 1, width: 512 })
   shareOpen.value = false
@@ -130,7 +181,7 @@ async function downloadPdf (url: string) {
   const entry = library.value.find((p) => p.id === shareEntryId.value)
   printPred.value = predForEntry(shareEntryId.value)
   if (!printPred.value) return
-  printTitle.value = entry?.name || activeEntry.value?.name || 'Pronóstico Mundial 2026'
+  printTitle.value = entry?.name || activeEntry.value?.name || t('store.defaultTitle')
   printAuthor.value = entry?.author?.nickname ?? activeEntry.value?.author?.nickname
   try {
     printQr.value = await QRCode.toDataURL(url, { margin: 1, width: 512 })
@@ -139,7 +190,7 @@ async function downloadPdf (url: string) {
     await nextTick()
     // El contenedor envuelve al PrintView; capturamos su primer hijo (la hoja).
     const el = printView.value?.firstElementChild as HTMLElement | null
-    if (!el) throw new Error('No se encontró la hoja a capturar.')
+    if (!el) throw new Error(t('pdf.sheetNotFound'))
     const canvas = await html2canvas(el, { scale: 2, backgroundColor: '#fff', useCORS: true })
     const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
     const pageW = 210
@@ -155,7 +206,7 @@ async function downloadPdf (url: string) {
     doc.addImage(canvas.toDataURL('image/png'), 'PNG', x, 0, imgW, imgH)
     doc.save(sanitizeFilename(printTitle.value))
   } catch (e: unknown) {
-    alert('No se pudo generar el PDF. ' + (e instanceof Error ? e.message : ''))
+    alert(t('pdf.error') + (e instanceof Error ? e.message : ''))
   } finally {
     pdfCapturing.value = false
   }
@@ -172,7 +223,7 @@ async function pdfEntry (id: string) {
     const { url } = await buildShareUrl(code)
     await downloadPdf(url)
   } catch (e: unknown) {
-    alert('No se pudo generar el PDF. ' + (e instanceof Error ? e.message : ''))
+    alert(t('pdf.error') + (e instanceof Error ? e.message : ''))
   }
 }
 
@@ -187,8 +238,13 @@ async function printEntry (id: string) {
     const { url } = await buildShareUrl(code)
     await handlePrint(url)
   } catch (e: unknown) {
-    alert('No se pudo preparar la impresión. ' + (e instanceof Error ? e.message : ''))
+    alert(t('pdf.printError') + (e instanceof Error ? e.message : ''))
   }
+}
+
+// Cambia el idioma de la interfaz (ES/EN) y persiste la preferencia.
+function changeLocale (l: Locale) {
+  setLocale(l)
 }
 
 function openProfile () {
@@ -208,7 +264,7 @@ const nameDraft = ref('')
 const nameInput = ref<HTMLInputElement | null>(null)
 
 function startEditName () {
-  if (readonly.value || !activeEntry.value) return
+  if (readonly.value || isOfficial.value || !activeEntry.value) return
   nameDraft.value = activeEntry.value.name
   editingName.value = true
   nextTick(() => nameInput.value?.focus())
@@ -224,8 +280,12 @@ function commitName () {
 
 function applyPrediction (p: Prediction) {
   loading = true
+  pred.mode = p.mode
+  pred.results = p.results
   pred.groupOrder = p.groupOrder
   pred.thirdsRank = p.thirdsRank
+  pred.draftGroupOrder = p.draftGroupOrder
+  pred.draftThirdsRank = p.draftThirdsRank
   pred.picks = p.picks
   nextTick(() => { loading = false })
 }
@@ -233,8 +293,16 @@ function applyPrediction (p: Prediction) {
 function persistActive () {
   const entry = activeEntry.value
   if (!entry || !entry.mine) return
+  // El oficial no es un pronóstico: sus posiciones/llaves se derivan solas de
+  // los resultados (sin paso de "Confirmar"). Forzamos modo 'score'.
+  if (entry.official) { pred.mode = 'score'; confirmStandings(pred) }
   prunePicks(pred)
   entry.code = encodePrediction(pred)
+  // Modo y resultados son datos locales (no van en el código compartido).
+  entry.mode = pred.mode
+  entry.results = pred.results
+  entry.draftGroupOrder = pred.draftGroupOrder
+  entry.draftThirdsRank = pred.draftThirdsRank
   entry.updatedAt = Date.now()
   saveLibrary(library.value)
 }
@@ -248,12 +316,41 @@ function select (id: string) {
   setActiveId(id)
   try { applyPrediction(decodePrediction(entry.code)) }
   catch { applyPrediction(defaultPrediction()) }
+  // Modo/resultados: si el entry los tiene guardados (míos), úsalos; si no
+  // (importados), quedan los que ya trae el código decodificado.
+  if (entry.mode) pred.mode = entry.mode
+  if (entry.results) pred.results = JSON.parse(JSON.stringify(entry.results))
+  // El borrador local del entry, si existe; si no, arranca == confirmado.
+  pred.draftGroupOrder = entry.draftGroupOrder
+    ? entry.draftGroupOrder.map((a) => [...a])
+    : pred.groupOrder.map((a) => [...a])
+  pred.draftThirdsRank = entry.draftThirdsRank ? [...entry.draftThirdsRank] : [...pred.thirdsRank]
+  // El oficial siempre en modo marcador y abriendo directo en "Resultados".
+  if (entry.official) { pred.mode = 'score'; tab.value = 'resultados' }
   sidebarOpen.value = false
+}
+
+// Garantiza que exista EXACTAMENTE una entrada de resultados oficiales. Si no
+// hay ninguna, la crea y persiste; no se duplica en cada arranque.
+function ensureOfficialEntry () {
+  if (library.value.some((p) => p.official)) return
+  const entry: SavedPrediction = {
+    id: genId(),
+    name: t('store.officialName'),
+    mine: true,
+    official: true,
+    mode: 'score',
+    results: {},
+    code: encodePrediction(defaultPrediction()),
+    updatedAt: Date.now(),
+  }
+  library.value.push(entry)
+  saveLibrary(library.value)
 }
 
 function uniqueName () {
   const n = library.value.filter((p) => p.mine).length + 1
-  return `Mi pronóstico ${n}`
+  return t('store.defaultName', { n })
 }
 
 function create () {
@@ -271,7 +368,7 @@ function create () {
 function remove (id: string) {
   const entry = library.value.find((p) => p.id === id)
   if (!entry) return
-  if (!confirm(`¿Eliminar "${entry.name}"?`)) return
+  if (!confirm(t('store.confirmDelete', { name: entry.name }))) return
   library.value = library.value.filter((p) => p.id !== id)
   saveLibrary(library.value)
   if (activeId.value === id) {
@@ -284,7 +381,7 @@ function remove (id: string) {
 function rename (id: string) {
   const entry = library.value.find((p) => p.id === id)
   if (!entry) return
-  const name = prompt('Nombre del pronóstico', entry.name)
+  const name = prompt(t('store.promptRename'), entry.name)
   if (name && name.trim()) { entry.name = name.trim(); saveLibrary(library.value) }
 }
 
@@ -292,7 +389,7 @@ function copyToMine (id: string) {
   const entry = library.value.find((p) => p.id === id)
   if (!entry) return
   const copy: SavedPrediction = {
-    id: genId(), name: entry.name + ' (copia)', code: entry.code,
+    id: genId(), name: entry.name + t('store.copySuffix'), code: entry.code,
     updatedAt: Date.now(), mine: true,
   }
   library.value.push(copy)
@@ -311,11 +408,11 @@ async function doImport () {
   importing.value = true
   try {
     const parsed = await parseShareFragment(extractFragment(importText.value))
-    if (!parsed) throw new Error('No se pudo leer un pronóstico válido del enlace.')
+    if (!parsed) throw new Error(t('store.invalidLink'))
     decodePrediction(parsed.code) // valida
     const entry: SavedPrediction = {
       id: genId(),
-      name: (parsed.nickname || 'Pronóstico importado'),
+      name: (parsed.nickname || t('store.importedName')),
       code: parsed.code,
       updatedAt: Date.now(),
       mine: false,
@@ -339,6 +436,7 @@ onMounted(async () => {
   window.addEventListener('appinstalled', onAppInstalled)
 
   library.value = loadLibrary()
+  ensureOfficialEntry()
 
   const frag = location.hash.replace(/^#/, '')
   if (frag) {
@@ -348,7 +446,7 @@ onMounted(async () => {
       try {
         decodePrediction(parsed.code)
         const entry: SavedPrediction = {
-          id: genId(), name: parsed.nickname || 'Pronóstico compartido',
+          id: genId(), name: parsed.nickname || t('store.sharedName'),
           code: parsed.code, updatedAt: Date.now(), mine: false,
           author: { publickey: parsed.publickey, nickname: parsed.nickname, verified: parsed.verified },
         }
@@ -389,29 +487,36 @@ onUnmounted(() => {
       @share="openShare"
       @print="printEntry"
       @pdf="pdfEntry"
+      @scoring="scoringOpen = true; sidebarOpen = false"
     />
     <div class="main">
     <header class="scoreboard">
-      <button class="menu" @click="sidebarOpen = true" aria-label="Mis pronósticos">☰</button>
-      <img src="/favicon.svg" alt="Logo" class="brand-logo" />
+      <button class="menu" data-testid="menu-btn" @click="sidebarOpen = true" :aria-label="t('header.menu')">☰</button>
+      <img src="/favicon.svg" :alt="t('header.logo')" class="brand-logo" />
       <div class="title">
-        <span class="cup">Mundial · 48 selecciones</span>
-        <h1>Pronóstico <em>2026</em></h1>
+        <span class="cup">{{ t('header.cup') }}</span>
+        <h1>{{ t('header.title') }} <em>2026</em></h1>
       </div>
       <div class="hdr-right">
+        <!-- Selector de idioma compacto (ES | EN) -->
+        <div class="lang-selector" data-testid="lang-selector" role="group" :aria-label="t('lang.label')">
+          <button data-testid="lang-es" :class="{ on: locale === 'es' }" @click="changeLocale('es')">{{ t('lang.es') }}</button>
+          <button data-testid="lang-en" :class="{ on: locale === 'en' }" @click="changeLocale('en')">{{ t('lang.en') }}</button>
+        </div>
         <!-- Botón circular de identidad (siempre visible) -->
-        <button class="identity-btn" @click="openProfile" aria-label="Mi identidad" title="Mi identidad">👤</button>
+        <button class="identity-btn" data-testid="identity-btn" @click="openProfile" :aria-label="t('header.identity')" :title="t('header.identity')">👤</button>
       </div>
     </header>
 
     <div class="active-bar">
-      <button v-if="!isStandalone" class="install-float" @click="installApp">Instalar App</button>
+      <button v-if="!isStandalone" class="install-float" data-testid="install-btn" @click="installApp">{{ t('active.install') }}</button>
       <span class="dot" :class="{ ro: readonly }"></span>
       <input
         v-if="editingName"
         ref="nameInput"
         v-model="nameDraft"
         class="name-input"
+        data-testid="name-input"
         maxlength="40"
         @keydown.enter="commitName"
         @keydown.esc="editingName = false"
@@ -420,69 +525,125 @@ onUnmounted(() => {
       <button
         v-else
         class="active-name"
-        :class="{ editable: !readonly }"
-        :title="readonly ? '' : 'Editar nombre'"
+        data-testid="active-name"
+        :class="{ editable: !readonly && !isOfficial }"
+        :title="(readonly || isOfficial) ? '' : t('active.editName')"
         @click="startEditName"
       >
-        {{ activeEntry?.name || '—' }}<span v-if="!readonly" class="pen">✎</span>
+        {{ activeEntry?.name || t('active.placeholder') }}<span v-if="!readonly && !isOfficial" class="pen">✎</span>
       </button>
       <span v-if="readonly" class="ro-badge">
-        {{ activeEntry?.author?.verified ? '✓ firmado' : '⚠ sin verificar' }}
-        · {{ activeEntry?.author?.nickname || 'anónimo' }}
-        <button class="mini" @click="rateAuthor">valorar autor</button>
-        <button class="mini" @click="activeEntry && copyToMine(activeEntry.id)">editar copia</button>
+        {{ activeEntry?.author?.verified ? t('active.signed') : t('active.unverified') }}
+        · {{ activeEntry?.author?.nickname || t('common.anonymous') }}
+        <button class="mini" @click="rateAuthor">{{ t('active.rateAuthor') }}</button>
+        <button class="mini" @click="activeEntry && copyToMine(activeEntry.id)">{{ t('active.editCopy') }}</button>
       </span>
       <span v-else-if="championId != null" class="champ-chip">
         🏆 {{ teamById(championId).flag }} {{ teamById(championId).code }}
       </span>
 
       <!-- Acciones del pronóstico ACTIVO (alineadas a la derecha) -->
-      <div v-if="activeId" class="bar-actions">
-        <button class="share-i" title="Compartir" @click="openShare(activeId)">
+      <div v-if="activeId" class="bar-actions" data-testid="bar-actions">
+        <button class="share-i" data-testid="bar-share" :title="t('common.share')" @click="openShare(activeId)">
           <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor" aria-hidden="true">
             <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z" />
           </svg>
         </button>
-        <button title="Imprimir" @click="printEntry(activeId)">🖨</button>
-        <button class="pdf-i" title="Descargar PDF" @click="pdfEntry(activeId)">
+        <button :title="t('common.print')" data-testid="bar-print" @click="printEntry(activeId)">🖨</button>
+        <button class="pdf-i" data-testid="bar-pdf" :title="t('common.pdf')" @click="pdfEntry(activeId)">
           <img src="/pdf.svg" alt="PDF" class="pdf-img" />
         </button>
-        <button v-if="!readonly" title="Renombrar" @click="startEditName">✎</button>
-        <button v-if="readonly" title="Editar copia" @click="copyToMine(activeId)">⎘</button>
-        <button class="danger-i" title="Eliminar" @click="remove(activeId)">🗑</button>
+        <button v-if="!readonly && !isOfficial" :title="t('common.rename')" data-testid="bar-rename" @click="startEditName">✎</button>
+        <button v-if="readonly" :title="t('common.editCopy')" data-testid="bar-copy" @click="copyToMine(activeId)">⎘</button>
+        <button v-if="!isOfficial" class="danger-i" data-testid="bar-delete" :title="t('common.delete')" @click="remove(activeId)">🗑</button>
       </div>
     </div>
 
+    <!-- Selector de modo de juego (oculto en pronósticos importados). -->
+    <div v-if="!readonly && !isOfficial" class="mode-bar" data-testid="mode-bar">
+      <span class="mode-label">{{ t('modes.label') }}</span>
+      <div class="mode-opts">
+        <button data-testid="mode-manual" :class="{ on: pred.mode === 'manual' }" @click="setMode('manual')" :title="t('modes.simpleTitle')">{{ t('modes.simple') }}</button>
+        <button data-testid="mode-winlose" :class="{ on: pred.mode === 'winlose' }" @click="setMode('winlose')" :title="t('modes.mediumTitle')">{{ t('modes.medium') }}</button>
+        <button data-testid="mode-score" :class="{ on: pred.mode === 'score' }" @click="setMode('score')" :title="t('modes.fullTitle')">{{ t('modes.full') }}</button>
+      </div>
+    </div>
+
+    <!-- Franja de confirmación: visible cuando hay resultados sin aplicar. -->
+    <div v-if="!readonly && !isOfficial && pending" class="confirm-bar" data-testid="confirm-bar">
+      <span class="confirm-msg">{{ t('confirm.msg') }}</span>
+      <button class="confirm-btn" data-testid="confirm-btn" @click="confirmChanges">{{ t('confirm.btn') }}</button>
+    </div>
+
     <nav class="tabs">
-      <button :class="{ active: tab === 'grupos' }" @click="tab = 'grupos'">Fase de grupos</button>
-      <button :class="{ active: tab === 'llaves' }" @click="tab = 'llaves'">Llaves</button>
+      <button data-testid="tab-grupos" :class="{ active: tab === 'grupos' }" @click="tab = 'grupos'">{{ t('tabs.groups') }}</button>
+      <button data-testid="tab-llaves" :class="{ active: tab === 'llaves' }" @click="tab = 'llaves'">{{ t('tabs.bracket') }}</button>
+      <button
+        v-if="pred.mode !== 'manual'"
+        data-testid="tab-resultados"
+        :class="{ active: tab === 'resultados' }"
+        @click="tab = 'resultados'"
+      >{{ t('tabs.results') }}</button>
+      <button
+        v-if="!isOfficial"
+        data-testid="tab-puntajes"
+        :class="{ active: tab === 'puntajes' }"
+        @click="tab = 'puntajes'"
+      >{{ t('tabs.scores') }}</button>
     </nav>
 
     <main class="content">
-      <section v-show="tab === 'grupos'" class="scrolly">
-        <p class="tab-hint">
-          {{ readonly ? 'Pronóstico de solo lectura.' : 'Arrastra para ordenar cada grupo (1.º y 2.º clasifican directo).' }}
-        </p>
-        <div class="groups-grid">
-          <GroupCard
-            v-for="(g, i) in GROUPS"
-            :key="g.letter"
-            :pred="pred"
-            :group="i"
-            :letter="g.letter"
-            :readonly="readonly"
-          />
-        </div>
-        <ThirdsBlock :pred="pred" :readonly="readonly" class="thirds-wrap" />
+      <section v-show="tab === 'grupos'" class="scrolly" data-testid="zone-grupos">
+        <!-- Modo manual: tablas arrastrables (comportamiento clásico). -->
+        <template v-if="pred.mode === 'manual'">
+          <p class="tab-hint">
+            {{ readonly ? t('groupsTab.hintReadonly') : t('groupsTab.hintDrag') }}
+          </p>
+          <div class="groups-grid">
+            <GroupCard
+              v-for="(g, i) in GROUPS"
+              :key="g.letter"
+              :pred="pred"
+              :group="i"
+              :letter="g.letter"
+              :readonly="readonly"
+            />
+          </div>
+          <ThirdsBlock :pred="pred" :readonly="readonly" class="thirds-wrap" />
+        </template>
+
+        <!-- Modos winlose/score: tablas CALCULADAS en solo lectura. -->
+        <template v-else>
+          <p class="tab-hint">
+            {{ t('groupsTab.hintCalc') }}
+          </p>
+          <div class="groups-grid">
+            <StandingsTable
+              v-for="(g, i) in GROUPS"
+              :key="g.letter"
+              :pred="pred"
+              :group="i"
+              :letter="g.letter"
+            />
+          </div>
+        </template>
       </section>
 
-      <section v-show="tab === 'llaves'">
-        <BracketTab :pred="pred" :readonly="readonly" />
+      <section v-show="tab === 'resultados' && pred.mode !== 'manual'" class="scrolly" data-testid="zone-resultados">
+        <ResultsTab :pred="pred" :readonly="readonly" />
+      </section>
+
+      <section v-show="tab === 'llaves'" data-testid="zone-llaves">
+        <BracketTab :pred="pred" :readonly="readonly || isOfficial" />
+      </section>
+
+      <section v-show="tab === 'puntajes'" class="scrolly" data-testid="zone-puntajes">
+        <ScoresTab :entry="activeEntry" :official="officialEntry" />
       </section>
     </main>
 
     <footer class="footer">
-      <span class="eco">Ecosistema <a href="https://closer.click" target="_blank" rel="noopener">Closer Click</a></span>
+      <span class="eco">{{ t('footer.eco') }} <a href="https://closer.click" target="_blank" rel="noopener">Closer Click</a></span>
     </footer>
 
     <ShareModal
@@ -493,6 +654,8 @@ onUnmounted(() => {
       @pdf="downloadPdf"
     />
 
+    <ScoringInfo :open="scoringOpen" @close="scoringOpen = false" />
+
     <IdentityPanel
       :open="identityOpen"
       :focus-pubkey="identityFocus"
@@ -501,19 +664,19 @@ onUnmounted(() => {
     />
 
     <div v-if="importOpen" class="overlay" @click.self="importOpen = false">
-      <div class="import-modal">
-        <button class="x" @click="importOpen = false" aria-label="Cerrar">×</button>
-        <h3>Importar pronóstico</h3>
-        <p class="imp-help">Pega el enlace (o el código tras <code>#</code>) que te compartieron.</p>
+      <div class="import-modal" data-testid="import-modal">
+        <button class="x" @click="importOpen = false" :aria-label="t('common.close')">×</button>
+        <h3>{{ t('import.title') }}</h3>
+        <p class="imp-help">{{ t('import.help', { hash: '#' }) }}</p>
         <textarea
           v-model="importText"
           rows="3"
-          placeholder="https://mundial.closer.click/#..."
+          :placeholder="t('import.placeholder')"
           @keydown.stop
         ></textarea>
         <p v-if="importError" class="imp-err">{{ importError }}</p>
         <button class="imp-go" :disabled="importing || !importText.trim()" @click="doImport">
-          {{ importing ? 'Verificando…' : 'Importar y verificar' }}
+          {{ importing ? t('import.verifying') : t('import.go') }}
         </button>
       </div>
     </div>
@@ -572,6 +735,18 @@ onUnmounted(() => {
 }
 
 .hdr-right { display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0; }
+/* Selector de idioma compacto (ES | EN) */
+.lang-selector {
+  display: inline-flex; border: 1px solid var(--line); border-radius: 8px;
+  overflow: hidden; background: rgba(65, 180, 255, 0.08);
+}
+.lang-selector button {
+  background: transparent; color: var(--muted); border: none; cursor: pointer;
+  font-family: inherit; font-weight: 800; font-size: 0.72rem; letter-spacing: 0.04em;
+  padding: 0.35rem 0.5rem; line-height: 1;
+}
+.lang-selector button:hover { background: rgba(65, 180, 255, 0.16); color: var(--text); }
+.lang-selector button.on { background: var(--azure); color: #042038; }
 .identity-btn {
   display: flex; align-items: center; justify-content: center; flex-shrink: 0;
   width: 42px; height: 42px; border-radius: 50%; font-size: 1.2rem; cursor: pointer;
@@ -644,6 +819,40 @@ onUnmounted(() => {
 .bar-actions .share-i { color: var(--azure); }
 .bar-actions .share-i:hover { background: rgba(65, 180, 255, 0.18); color: var(--azure); }
 .bar-actions .danger-i:hover { background: rgba(255, 80, 80, 0.18); color: #ff8585; }
+
+/* Selector de modo de juego */
+.mode-bar {
+  display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
+  padding: 0.5rem 1rem; border-bottom: 1px solid var(--line-soft);
+  background: rgba(255, 255, 255, 0.015);
+}
+.mode-label { color: var(--muted); font-size: 0.8rem; font-weight: 700; }
+.mode-opts { display: flex; gap: 0.3rem; flex-wrap: wrap; }
+.mode-opts button {
+  background: transparent; color: var(--muted); border: 1px solid var(--line);
+  border-radius: 50px; padding: 0.35rem 0.85rem; cursor: pointer;
+  font-family: inherit; font-weight: 700; font-size: 0.8rem;
+}
+.mode-opts button:hover { background: rgba(255, 255, 255, 0.06); color: var(--text); }
+.mode-opts button.on {
+  background: var(--azure); color: #042038; border-color: var(--azure);
+  box-shadow: 0 0 10px rgba(65, 180, 255, 0.4);
+}
+
+/* Franja de confirmación de cambios pendientes */
+.confirm-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.7rem;
+  flex-wrap: wrap; padding: 0.6rem 1rem;
+  background: linear-gradient(90deg, rgba(255, 207, 63, 0.16), rgba(255, 207, 63, 0.06));
+  border-bottom: 1px solid var(--gold);
+}
+.confirm-msg { color: var(--gold); font-size: 0.82rem; font-weight: 700; }
+.confirm-btn {
+  background: var(--gold); color: #2a1d00; border: none; border-radius: 50px;
+  padding: 0.5rem 1.1rem; font-weight: 800; cursor: pointer; font-family: inherit;
+  font-size: 0.85rem; white-space: nowrap; box-shadow: 0 4px 16px rgba(255, 207, 63, 0.35);
+}
+.confirm-btn:hover { filter: brightness(1.06); }
 
 .tabs { display: flex; gap: 0.4rem; padding: 0.8rem 1rem 0; }
 .tabs button {

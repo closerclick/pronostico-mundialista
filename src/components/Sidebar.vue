@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { SavedPrediction } from '../lib/store'
+import { scoreEntry } from '../lib/scoring'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   open: boolean
@@ -18,10 +22,26 @@ const emit = defineEmits<{
   share: [id: string]
   print: [id: string]
   pdf: [id: string]
+  scoring: []
 }>()
 
-const mine = computed(() => props.library.filter((p) => p.mine).sort((a, b) => b.updatedAt - a.updatedAt))
+const mine = computed(() => props.library.filter((p) => p.mine && !p.official).sort((a, b) => b.updatedAt - a.updatedAt))
 const imported = computed(() => props.library.filter((p) => !p.mine).sort((a, b) => b.updatedAt - a.updatedAt))
+// Resultados REALES/oficiales: entradas marcadas con `official`.
+const official = computed(() => props.library.filter((p) => p.official).sort((a, b) => b.updatedAt - a.updatedAt))
+
+// Entrada oficial (base de comparación) y mapa id→puntaje total.
+const officialEntry = computed<SavedPrediction | null>(() => props.library.find((p) => p.official) ?? null)
+const scores = computed<Record<string, number>>(() => {
+  const o = officialEntry.value
+  const map: Record<string, number> = {}
+  if (!o) return map
+  for (const p of props.library) {
+    if (p.official) continue
+    map[p.id] = scoreEntry(p, o).total
+  }
+  return map
+})
 </script>
 
 <template>
@@ -29,70 +49,108 @@ const imported = computed(() => props.library.filter((p) => !p.mine).sort((a, b)
     <div class="scrim" @click="emit('close')"></div>
     <aside class="drawer">
       <header class="dh">
-        <span>Pronósticos</span>
-        <button class="x" @click="emit('close')" aria-label="Cerrar">×</button>
+        <span>{{ t('sidebar.title') }}</span>
+        <button class="x" @click="emit('close')" :aria-label="t('common.close')">×</button>
       </header>
 
       <div class="actions">
-        <button class="act new" @click="emit('create')">➕ Nuevo</button>
-        <button class="act imp" @click="emit('import')">📥 Importar</button>
+        <button class="act new" data-testid="sb-new" @click="emit('create')">{{ t('sidebar.new') }}</button>
+        <button class="act imp" data-testid="sb-import" @click="emit('import')">{{ t('sidebar.import') }}</button>
       </div>
 
-      <section class="group">
-        <h4>Mis pronósticos</h4>
-        <p v-if="!mine.length" class="empty">Aún no tienes ninguno.</p>
+      <button class="scoring-btn" data-testid="sb-scoring" @click="emit('scoring')">{{ t('sidebar.scoring') }}</button>
+
+      <section class="group" data-testid="sb-section-mine">
+        <h4>{{ t('sidebar.mine') }}</h4>
+        <p v-if="!mine.length" class="empty">{{ t('sidebar.emptyMine') }}</p>
         <div
           v-for="p in mine"
           :key="p.id"
           class="item"
+          data-testid="pred-item"
+          :data-id="p.id"
           :class="{ active: p.id === activeId }"
           @click="emit('select', p.id)"
         >
-          <span class="nm">{{ p.name }}</span>
+          <span class="nm">
+            {{ p.name }}
+            <span v-if="officialEntry" class="score-chip" :title="t('sidebar.pointsTitle')">▦ {{ t('sidebar.points', { n: scores[p.id] ?? 0 }) }}</span>
+          </span>
           <span class="tools">
-            <button class="share-i" title="Compartir" @click.stop="emit('share', p.id)">
+            <button class="share-i" :title="t('common.share')" @click.stop="emit('share', p.id)">
               <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true">
                 <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z" />
               </svg>
             </button>
-            <button title="Imprimir" @click.stop="emit('print', p.id)">🖨</button>
-            <button class="pdf-i" title="Descargar PDF" @click.stop="emit('pdf', p.id)">
+            <button :title="t('common.print')" @click.stop="emit('print', p.id)">🖨</button>
+            <button class="pdf-i" :title="t('common.pdf')" @click.stop="emit('pdf', p.id)">
               <img src="/pdf.svg" alt="PDF" class="pdf-img" />
             </button>
-            <button title="Renombrar" @click.stop="emit('rename', p.id)">✎</button>
-            <button title="Eliminar" @click.stop="emit('remove', p.id)">🗑</button>
+            <button :title="t('common.rename')" @click.stop="emit('rename', p.id)">✎</button>
+            <button :title="t('common.delete')" @click.stop="emit('remove', p.id)">🗑</button>
           </span>
         </div>
       </section>
 
-      <section class="group">
-        <h4>Importados</h4>
-        <p v-if="!imported.length" class="empty">Importa el enlace de alguien más.</p>
+      <section class="group" data-testid="sb-section-imported">
+        <h4>{{ t('sidebar.friends') }}</h4>
+        <p v-if="!imported.length" class="empty">{{ t('sidebar.emptyFriends') }}</p>
         <div
           v-for="p in imported"
           :key="p.id"
           class="item"
+          data-testid="pred-item"
+          :data-id="p.id"
           :class="{ active: p.id === activeId }"
           @click="emit('select', p.id)"
         >
           <span class="nm">
             {{ p.name }}
             <small class="auth" :class="{ ok: p.author?.verified }">
-              {{ p.author?.verified ? '✓' : '⚠' }} {{ p.author?.nickname || 'anónimo' }}
+              {{ p.author?.verified ? '✓' : '⚠' }} {{ p.author?.nickname || t('common.anonymous') }}
             </small>
+            <span v-if="officialEntry" class="score-chip" :title="t('sidebar.pointsTitle')">▦ {{ t('sidebar.points', { n: scores[p.id] ?? 0 }) }}</span>
           </span>
           <span class="tools">
-            <button class="share-i" title="Compartir" @click.stop="emit('share', p.id)">
+            <button class="share-i" :title="t('common.share')" @click.stop="emit('share', p.id)">
               <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true">
                 <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z" />
               </svg>
             </button>
-            <button title="Imprimir" @click.stop="emit('print', p.id)">🖨</button>
-            <button class="pdf-i" title="Descargar PDF" @click.stop="emit('pdf', p.id)">
+            <button :title="t('common.print')" @click.stop="emit('print', p.id)">🖨</button>
+            <button class="pdf-i" :title="t('common.pdf')" @click.stop="emit('pdf', p.id)">
               <img src="/pdf.svg" alt="PDF" class="pdf-img" />
             </button>
-            <button title="Editar una copia" @click.stop="emit('copy', p.id)">⎘</button>
-            <button title="Eliminar" @click.stop="emit('remove', p.id)">🗑</button>
+            <button :title="t('sidebar.editCopyTitle')" @click.stop="emit('copy', p.id)">⎘</button>
+            <button :title="t('common.delete')" @click.stop="emit('remove', p.id)">🗑</button>
+          </span>
+        </div>
+      </section>
+
+      <section class="group" data-testid="sb-section-official">
+        <h4>{{ t('sidebar.results') }}</h4>
+        <p v-if="!official.length" class="empty">{{ t('sidebar.emptyOfficial') }}</p>
+        <div
+          v-for="p in official"
+          :key="p.id"
+          class="item"
+          data-testid="pred-item"
+          :data-id="p.id"
+          :class="{ active: p.id === activeId }"
+          @click="emit('select', p.id)"
+        >
+          <span class="nm">{{ p.name }}</span>
+          <!-- No se elimina ni renombra; solo compartir/imprimir. -->
+          <span class="tools">
+            <button class="share-i" :title="t('common.share')" @click.stop="emit('share', p.id)">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true">
+                <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z" />
+              </svg>
+            </button>
+            <button :title="t('common.print')" @click.stop="emit('print', p.id)">🖨</button>
+            <button class="pdf-i" :title="t('common.pdf')" @click.stop="emit('pdf', p.id)">
+              <img src="/pdf.svg" alt="PDF" class="pdf-img" />
+            </button>
           </span>
         </div>
       </section>
@@ -134,7 +192,17 @@ const imported = computed(() => props.library.filter((p) => !p.mine).sort((a, b)
 }
 .item:hover { background: var(--panel-2); }
 .item.active { border-color: var(--green); background: var(--panel-2); }
-.nm { display: flex; flex-direction: column; font-size: 0.9rem; min-width: 0; }
+.scoring-btn {
+  margin: 0 0.8rem 0.2rem; padding: 0.5rem; border-radius: 8px; cursor: pointer;
+  background: transparent; color: var(--azure); border: 1px solid var(--azure);
+  font-weight: 700; font-size: 0.82rem;
+}
+.scoring-btn:hover { background: rgba(65, 180, 255, 0.12); }
+.nm { display: flex; flex-direction: column; align-items: flex-start; font-size: 0.9rem; min-width: 0; }
+.score-chip {
+  margin-top: 0.2rem; align-self: flex-start; background: var(--azure); color: #04210f;
+  font-weight: 800; font-size: 0.7rem; border-radius: 6px; padding: 0.05rem 0.4rem; white-space: nowrap;
+}
 .nm .auth { font-size: 0.68rem; color: #e0a; }
 .nm .auth.ok { color: var(--green); }
 .auth { color: var(--muted); }

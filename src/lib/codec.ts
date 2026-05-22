@@ -1,17 +1,28 @@
-// Codificación compacta del pronóstico en la cadena más corta posible.
+// Codificación compacta del pronóstico. Incluye TODO lo necesario para
+// reconstruirlo: modo, posiciones confirmadas, llaves y resultados (goles y
+// penales) de cada partido.
 //
-// Layout de bits (MSB primero):
-//   - versión            4 bits  (=2)
-//   - 12 grupos × 5 bits         (rango factorial 0..23 de cada permutación de 4)
-//   - terceros          29 bits  (rango factorial 0..12!-1 de la permutación de 12)
+// Layout de bits (MSB primero), versión 3:
+//   - versión            4 bits  (=3)
+//   - modo               2 bits  (0 manual, 1 winlose, 2 score)
+//   - 12 grupos × 5 bits         (rango factorial de cada permutación de 4)
+//   - terceros          29 bits  (rango factorial de la permutación de 12)
 //   - 32 picks × 2 bits          (0 sin decidir, 1 = home/arriba, 2 = away/abajo)
-// Total: 157 bits ≈ 20 bytes ≈ 27 caracteres base64url.
+//   - resultados: cuenta 7 bits + por partido { clave 7, o 2, hayGoles 1
+//       [gh 4, ga 4], hayPenales 1 [ph 4, pa 4] }  (goles/penales 0..15)
+// Versión 2 (sin modo ni resultados) se sigue leyendo por compatibilidad.
 
 import { GROUPS } from './teams'
 import { R32, R16, QF, SF, THIRD_PLACE, FINAL } from './bracket'
 import { defaultPrediction, resolveMatches, type Prediction } from './prediction'
+import type { GameMode, MatchResult } from './standings'
 
-const VERSION = 2
+const VERSION = 3
+
+const MODES: GameMode[] = ['manual', 'winlose', 'score']
+function modeToCode (m: GameMode): number { const i = MODES.indexOf(m); return i < 0 ? 0 : i }
+function codeToMode (n: number): GameMode { return MODES[n] ?? 'manual' }
+const cap15 = (v: number): number => Math.max(0, Math.min(15, Math.floor(v)))
 
 // Orden fijo de partidos para los picks (debe permanecer estable).
 export const PICK_ORDER: number[] = [
@@ -106,9 +117,39 @@ function b64urlToBytes (s: string): Uint8Array {
 
 // ---- API -------------------------------------------------------------------
 
+function writeResults (w: BitWriter, results: Record<number, MatchResult>): void {
+  const keys = Object.keys(results).map(Number).filter((k) => results[k])
+  w.write(keys.length, 7) // hasta 104 partidos (< 128)
+  for (const key of keys) {
+    const res = results[key]!
+    w.write(key, 7)
+    w.write(res.o, 2)
+    const hasG = typeof res.gh === 'number' && typeof res.ga === 'number'
+    w.write(hasG ? 1 : 0, 1)
+    if (hasG) { w.write(cap15(res.gh!), 4); w.write(cap15(res.ga!), 4) }
+    const hasP = typeof res.ph === 'number' && typeof res.pa === 'number'
+    w.write(hasP ? 1 : 0, 1)
+    if (hasP) { w.write(cap15(res.ph!), 4); w.write(cap15(res.pa!), 4) }
+  }
+}
+
+function readResults (r: BitReader): Record<number, MatchResult> {
+  const out: Record<number, MatchResult> = {}
+  const n = r.read(7)
+  for (let i = 0; i < n; i++) {
+    const key = r.read(7)
+    const res: MatchResult = { o: r.read(2) as 0 | 1 | 2 }
+    if (r.read(1)) { res.gh = r.read(4); res.ga = r.read(4) }
+    if (r.read(1)) { res.ph = r.read(4); res.pa = r.read(4) }
+    out[key] = res
+  }
+  return out
+}
+
 export function encodePrediction (p: Prediction): string {
   const w = new BitWriter()
   w.write(VERSION, 4)
+  w.write(modeToCode(p.mode), 2)
   for (let g = 0; g < 12; g++) {
     const base = GROUPS[g]!.teams.map((t) => t.id)
     w.write(permToIndex(p.groupOrder[g]!, base), 5)
@@ -127,24 +168,36 @@ export function encodePrediction (p: Prediction): string {
     }
     w.write(side, 2)
   }
+  writeResults(w, p.results)
   return bytesToB64url(w.toBytes())
 }
 
 export function decodePrediction (code: string): Prediction {
   const r = new BitReader(b64urlToBytes(code))
   const version = r.read(4)
-  if (version !== VERSION) throw new Error(`Versión de código no soportada: ${version}`)
+  if (version !== 2 && version !== 3) throw new Error(`Versión de código no soportada: ${version}`)
   const p = defaultPrediction()
+  if (version === 3) p.mode = codeToMode(r.read(2))
   for (let g = 0; g < 12; g++) {
     const base = GROUPS[g]!.teams.map((t) => t.id)
     p.groupOrder[g] = indexToPerm(r.read(5), base)
   }
   p.thirdsRank = indexToPerm(r.read(29), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
-  // Lee los lados y reconstruye los team id resolviendo de forma incremental:
-  // cada partido depende solo de los anteriores en PICK_ORDER (R32→final), que
-  // ya quedaron decididos al llegar a él.
-  p.picks = {}
+  // El borrador arranca igual a lo confirmado: un pronóstico decodificado no
+  // debe mostrar "Confirmar cambios" espurio.
+  p.draftGroupOrder = p.groupOrder.map((a) => [...a])
+  p.draftThirdsRank = [...p.thirdsRank]
+  // Lee los lados de los picks (en el orden en que se escribieron).
   const sides = PICK_ORDER.map(() => r.read(2))
+  // Los resultados van DESPUÉS de los picks en el flujo de bits, pero deben
+  // leerse ANTES de reconstruir los picks: en modos no-manual los cupos de la
+  // llave se resuelven desde `results` (posiciones ciertas), así que sin ellos
+  // resolveMatches devolvería null y se perderían los picks.
+  if (version === 3) p.results = readResults(r)
+  // Reconstruye los team id resolviendo de forma incremental: cada partido
+  // depende solo de los anteriores en PICK_ORDER (R32→final), que ya quedaron
+  // decididos al llegar a él.
+  p.picks = {}
   PICK_ORDER.forEach((num, i) => {
     const side = sides[i]
     if (side === 1 || side === 2) {

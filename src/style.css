@@ -53,6 +53,11 @@ h1, h2, h3, h4 { font-family: var(--font-display); font-weight: 400; letter-spac
 
 button { font-family: inherit; }
 
+/* Inputs numéricos sin flechas (spinners): se ingresa con teclado. */
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
+
 a { color: var(--lime); }
 
 ::-webkit-scrollbar { width: 9px; height: 9px; }

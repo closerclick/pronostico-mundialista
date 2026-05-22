@@ -4,7 +4,7 @@ import typescriptParser from '@typescript-eslint/parser';
 import vueParser from 'vue-eslint-parser';
 
 export default [
-  { ignores: ['dist/**', 'dev-dist/**', 'node_modules/**'] },
+  { ignores: ['dist/**', 'dev-dist/**', 'node_modules/**', 'tests/**', 'test-results/**', 'playwright-report/**'] },
   js.configs.recommended,
   {
     files: ['**/*.js', '**/*.ts', '**/*.vue'],
@@ -73,6 +73,7 @@ export default [
         confirm: 'readonly',
         prompt: 'readonly',
         alert: 'readonly',
+        structuredClone: 'readonly',
       },
     },
   },

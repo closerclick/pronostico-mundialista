@@ -1,6 +1,8 @@
 // Librería de pronósticos guardada en localStorage: los míos (editables) y los
 // importados de otras personas (firmados, solo lectura).
 
+import type { GameMode, Results } from './standings'
+
 export interface SavedAuthor {
   publickey: string
   nickname?: string
@@ -15,7 +17,15 @@ export interface SavedPrediction {
   updatedAt: number
   /** true = propio y editable; false = importado de otra persona (solo lectura) */
   mine: boolean
+  /** true = entrada de RESULTADOS oficiales (única; sección aparte en la barra). */
+  official?: boolean
   author?: SavedAuthor
+  // Datos de resultados (solo locales; no viajan en el código compartido).
+  mode?: GameMode
+  results?: Results
+  // Borrador de posiciones del modo manual (solo local; no viaja en el código).
+  draftGroupOrder?: number[][]
+  draftThirdsRank?: number[]
 }
 
 const LIB_KEY = 'mundial.library.v1'

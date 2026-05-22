@@ -1,25 +1,31 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import draggable from 'vuedraggable'
 import { teamById, GROUP_LETTERS } from '../lib/teams'
 import type { Prediction } from '../lib/prediction'
+
+const { t } = useI18n()
 
 const props = defineProps<{ pred: Prediction; readonly?: boolean }>()
 
 interface ThirdItem { group: number; teamId: number }
 
 // Cada ítem se identifica por su grupo (estable aunque cambie el 3º del grupo).
+// Lee/escribe el BORRADOR (se aplica a las llaves al "Confirmar cambios").
 const items = computed<ThirdItem[]>({
-  get: () => props.pred.thirdsRank.map((g) => ({ group: g, teamId: props.pred.groupOrder[g]![2]! })),
-  set: (list: ThirdItem[]) => { props.pred.thirdsRank = list.map((i) => i.group) },
+  get: () => props.pred.draftThirdsRank.map((g) => ({ group: g, teamId: props.pred.draftGroupOrder[g]![2]! })),
+  set: (list: ThirdItem[]) => { props.pred.draftThirdsRank = list.map((i) => i.group) },
 })
 </script>
 
 <template>
   <div class="thirds">
     <div class="thirds-head">
-      <h3>Mejores terceros</h3>
-      <p>Ordena los 12 terceros: los <strong>8 de arriba</strong> clasifican a dieciseisavos.</p>
+      <h3>{{ t('thirds.title') }}</h3>
+      <i18n-t keypath="thirds.help" tag="p" scope="global">
+        <template #strong><strong>{{ t('thirds.helpStrong') }}</strong></template>
+      </i18n-t>
     </div>
     <draggable
       v-model="items"
@@ -31,16 +37,16 @@ const items = computed<ThirdItem[]>({
       class="thirds-list"
     >
       <template #item="{ element, index }">
-        <div class="third-row" :class="{ in: index < 8, out: index >= 8 }">
+        <div class="third-row" data-testid="third-row" :data-group="element.group" :class="{ in: index < 8, out: index >= 8 }">
           <span class="rank">{{ index + 1 }}</span>
           <span class="flag">{{ teamById(element.teamId).flag }}</span>
           <span class="name">{{ teamById(element.teamId).name }}</span>
-          <span class="grp">3º {{ GROUP_LETTERS[element.group] }}</span>
-          <span v-if="!readonly" class="drag" aria-label="Reordenar">⋮⋮</span>
+          <span class="grp">{{ t('thirds.label', { letter: GROUP_LETTERS[element.group] }) }}</span>
+          <span v-if="!readonly" class="drag" :aria-label="t('common.reorder')">⋮⋮</span>
         </div>
       </template>
     </draggable>
-    <div class="cut-note">— corte de clasificación —</div>
+    <div class="cut-note">{{ t('thirds.cut') }}</div>
   </div>
 </template>
 
