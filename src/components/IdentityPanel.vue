@@ -49,14 +49,14 @@ async function load () {
     // ya tenemos su clave pública, así que lo agregamos como contacto SIN token
     // y dejamos lista la pestaña de contactos para valorarlo.
     tab.value = 'contactos'
-    // Autollenamos el apodo con el que el autor firmó (viene en el link).
+    // Autollenamos el apodo con el que el autor firmó (viene en el link) y lo
+    // dejamos visible en el formulario.
     if (props.focusNick) newNick.value = props.focusNick
     const pk = props.focusPubkey
     const exists = contacts.value.some((c) => c.publickey === pk)
     if (!exists && pk !== inst.me?.publickey) {
       try {
         await inst.addContact({ publickey: pk, nickname: props.focusNick || undefined })
-        newNick.value = ''
         await refresh()
         emit('changed')
       } catch (e) {
