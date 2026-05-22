@@ -49,14 +49,19 @@ async function load () {
     // ya tenemos su clave pública, así que lo agregamos como contacto SIN token
     // y dejamos lista la pestaña de contactos para valorarlo.
     tab.value = 'contactos'
+    // Autollenamos el apodo con el que el autor firmó (viene en el link).
+    if (props.focusNick) newNick.value = props.focusNick
     const pk = props.focusPubkey
     const exists = contacts.value.some((c) => c.publickey === pk)
     if (!exists && pk !== inst.me?.publickey) {
       try {
         await inst.addContact({ publickey: pk, nickname: props.focusNick || undefined })
+        newNick.value = ''
         await refresh()
         emit('changed')
-      } catch { /* si falla, el usuario puede agregarlo por token */ }
+      } catch (e) {
+        addError.value = e instanceof Error ? e.message : String(e)
+      }
     }
   }
 }
@@ -84,8 +89,24 @@ async function addContact () {
   addStatus.value = ''
   if (!id.value || adding.value) return
 
-  // Normalizamos el token tal como hace el messenger: mayúsculas, sin espacios.
+  // Si estamos enfocados en un autor (ya tenemos su clave) y no se escribió
+  // token, lo agregamos directamente por su clave pública (no hace falta token).
   const token = newToken.value.trim().toUpperCase()
+  if (props.focusPubkey && !token) {
+    adding.value = true
+    try {
+      await id.value.addContact({ publickey: props.focusPubkey, nickname: newNick.value.trim() || props.focusNick || undefined })
+      newNick.value = ''
+      addStatus.value = t('identity.contactAdded')
+      await refresh()
+      emit('changed')
+    } catch (e) {
+      addError.value = e instanceof Error ? e.message : String(e)
+    } finally { adding.value = false }
+    return
+  }
+
+  // Normalizamos el token tal como hace el messenger: mayúsculas, sin espacios.
   if (!/^[A-Z0-9]{4,8}$/.test(token)) {
     addError.value = t('identity.tokenInvalid')
     return
@@ -173,23 +194,24 @@ function myRatingOf (p: PeerInfo): number { return p.myRating?.rating ?? 0 }
 
       <!-- CONTACTOS -->
       <section v-show="tab === 'contactos'" class="body">
+        <p v-if="focusPubkey" class="focus-note">{{ t('identity.authorNoToken') }}</p>
         <div class="add">
           <input
             v-model="newToken"
             class="token"
             maxlength="8"
-            :placeholder="t('identity.tokenPlaceholder')"
+            :placeholder="focusPubkey ? t('identity.tokenOptional') : t('identity.tokenPlaceholder')"
             :disabled="adding"
             @keydown.stop
             @keyup.enter="addContact"
           />
           <input v-model="newNick" :placeholder="t('identity.nickOptional')" :disabled="adding" @keydown.stop />
-          <button class="go" :disabled="adding || !newToken.trim()" @click="addContact">
+          <button class="go" :disabled="adding || (!newToken.trim() && !focusPubkey)" @click="addContact">
             {{ adding ? t('identity.searching') : t('identity.addContact') }}
           </button>
           <p v-if="addStatus" class="status">{{ addStatus }}</p>
           <p v-if="addError" class="err">{{ addError }}</p>
-          <i18n-t keypath="identity.addContactHint" tag="p" class="hint" scope="global">
+          <i18n-t v-if="!focusPubkey" keypath="identity.addContactHint" tag="p" class="hint" scope="global">
             <template #token><strong>{{ t('identity.tokenWord') }}</strong></template>
           </i18n-t>
         </div>
@@ -275,6 +297,10 @@ h3 { color: var(--azure); margin-bottom: 0.8rem; }
 .mono.sm { font-size: 0.68rem; color: var(--muted); }
 .copy { font-size: 0.75rem; color: var(--azure); }
 .hint { font-size: 0.78rem; color: var(--muted); margin-top: 0.5rem; }
+.focus-note {
+  font-size: 0.8rem; color: var(--azure); background: rgba(65, 180, 255, 0.1);
+  border: 1px solid var(--azure); border-radius: 8px; padding: 0.5rem 0.7rem; margin-bottom: 0.7rem;
+}
 .err { color: #ff6b6b; font-size: 0.78rem; margin-top: 0.3rem; }
 .status { color: var(--azure); font-size: 0.78rem; margin-top: 0.3rem; }
 .empty { color: var(--muted); font-style: italic; font-size: 0.85rem; padding: 0.6rem 0; }
