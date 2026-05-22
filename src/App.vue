@@ -104,6 +104,25 @@ function confirmChanges () {
   confirmStandings(pred) // persiste vía el watch profundo de `pred`
 }
 
+// Cambio de pestaña con guarda: si hay cambios sin aplicar (afectan las llaves),
+// se pregunta si aplicarlos o ignorarlos antes de cambiar de sección.
+type Tab = 'grupos' | 'resultados' | 'llaves' | 'puntajes'
+const tabSwitch = ref<Tab | null>(null)
+function goTab (target: Tab) {
+  if (target === tab.value) return
+  if (pending.value && !readonly.value && !isOfficial.value) { tabSwitch.value = target; return }
+  tab.value = target
+}
+function applyAndGo () {
+  confirmChanges()
+  if (tabSwitch.value) tab.value = tabSwitch.value
+  tabSwitch.value = null
+}
+function ignoreAndGo () {
+  if (tabSwitch.value) tab.value = tabSwitch.value
+  tabSwitch.value = null
+}
+
 // Código a firmar/compartir: el del pronóstico elegido en la barra lateral
 // (o el activo si se comparte sin elegir).
 const shareCode = computed(() => {
@@ -654,19 +673,19 @@ onUnmounted(() => {
     </div>
 
     <nav class="tabs">
-      <button data-testid="tab-grupos" :class="{ active: tab === 'grupos' }" @click="tab = 'grupos'">{{ t('tabs.groups') }}</button>
-      <button data-testid="tab-llaves" :class="{ active: tab === 'llaves' }" @click="tab = 'llaves'">{{ t('tabs.bracket') }}</button>
+      <button data-testid="tab-grupos" :class="{ active: tab === 'grupos' }" @click="goTab('grupos')">{{ t('tabs.groups') }}</button>
+      <button data-testid="tab-llaves" :class="{ active: tab === 'llaves' }" @click="goTab('llaves')">{{ t('tabs.bracket') }}</button>
       <button
         v-if="pred.mode !== 'manual'"
         data-testid="tab-resultados"
         :class="{ active: tab === 'resultados' }"
-        @click="tab = 'resultados'"
+        @click="goTab('resultados')"
       >{{ t('tabs.results') }}</button>
       <button
         v-if="!isOfficial"
         data-testid="tab-puntajes"
         :class="{ active: tab === 'puntajes' }"
-        @click="tab = 'puntajes'"
+        @click="goTab('puntajes')"
       >{{ t('tabs.scores') }}</button>
     </nav>
 
@@ -741,6 +760,18 @@ onUnmounted(() => {
       @close="identityOpen = false"
       @changed="library = [...library]"
     />
+
+    <!-- Cambios sin aplicar al cambiar de sección: aplicar o ignorar. -->
+    <div v-if="tabSwitch" class="overlay" @click.self="tabSwitch = null">
+      <div class="warn-modal" data-testid="tabswitch-modal">
+        <h3>⚠ {{ t('tabSwitch.title') }}</h3>
+        <p>{{ t('tabSwitch.msg') }}</p>
+        <div class="warn-actions">
+          <button class="warn-cancel" data-testid="tabswitch-ignore" @click="ignoreAndGo">{{ t('tabSwitch.ignore') }}</button>
+          <button class="warn-go" data-testid="tabswitch-apply" @click="applyAndGo">{{ t('tabSwitch.apply') }}</button>
+        </div>
+      </div>
+    </div>
 
     <!-- Aviso de pronóstico incompleto al compartir/imprimir. -->
     <div v-if="warn" class="overlay" @click.self="warn = null">

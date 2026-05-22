@@ -73,6 +73,12 @@ const es = {
     msg: '⚠ Las llaves aún no reflejan el nuevo orden de posiciones.',
     btn: 'Confirmar cambios (afecta las llaves)',
   },
+  tabSwitch: {
+    title: 'Cambios sin aplicar',
+    msg: 'Tenés cambios que todavía no se aplicaron a las llaves. ¿Querés aplicarlos antes de cambiar de sección?',
+    apply: 'Aplicar cambios',
+    ignore: 'Ignorar',
+  },
   tabs: {
     groups: 'Fase de grupos',
     results: 'Resultados',
@@ -343,6 +349,12 @@ const en: typeof es = {
   confirm: {
     msg: '⚠ The bracket does not yet reflect the new standings order.',
     btn: 'Confirm changes (affects the bracket)',
+  },
+  tabSwitch: {
+    title: 'Unapplied changes',
+    msg: 'You have changes that have not been applied to the bracket yet. Apply them before switching section?',
+    apply: 'Apply changes',
+    ignore: 'Ignore',
   },
   tabs: {
     groups: 'Group stage',

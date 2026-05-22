@@ -48,6 +48,8 @@ En Medio/Completo aparece la pestaña **Resultados** (carga de partidos) y la
 pestaña Grupos muestra la tabla calculada (solo lectura). Un botón **Confirmar
 cambios** aplica las posiciones a las llaves (invalidando en cascada los picks
 afectados); en Simple, confirmar aparece cuando el reordenado afecta las llaves.
+Si **cambiás de sección** con cambios sin aplicar, un modal ofrece **aplicarlos
+o ignorarlos**.
 
 ### Llaves
 - Formato **simétrico** con la final al centro y trofeo, y **líneas conectoras**
