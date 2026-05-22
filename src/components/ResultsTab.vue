@@ -254,12 +254,9 @@ function clearAll (): void {
   props.pred.results = {}
 }
 
-// Obtener resultados oficiales. PLACEHOLDER a futuro: por ahora SIMULA usando
-// el relleno aleatorio. Cuando empiece el Mundial, aquí se traerán los datos
-// reales desde una fuente oficial.
+// Obtener resultados oficiales. PLACEHOLDER a futuro: cuando empiece el Mundial
+// aquí se traerán los datos reales. Por ahora solo avisa; NO toca los datos.
 function fetchOfficial (): void {
-  if (props.readonly) return
-  fillRandom()
   alert(t('results.officialSim'))
 }
 </script>
