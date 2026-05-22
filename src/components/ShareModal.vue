@@ -6,7 +6,7 @@ import { buildShareUrl } from '../lib/share'
 
 const { t } = useI18n()
 
-const props = defineProps<{ code: string; open: boolean; name?: string }>()
+const props = defineProps<{ code: string; open: boolean; name?: string; presetUrl?: string | null }>()
 const emit = defineEmits<{ close: []; print: [url: string]; pdf: [url: string] }>()
 
 const canvas = ref<HTMLCanvasElement | null>(null)
@@ -21,13 +21,20 @@ async function generate () {
   error.value = ''
   copied.value = false
   try {
-    const res = await buildShareUrl(props.code, props.name)
-    url.value = res.url
-    nickname.value = res.nickname
+    // Pronóstico ajeno: reusamos su enlace original (ya firmado por su autor),
+    // sin volver a firmar con la identidad propia.
+    if (props.presetUrl) {
+      url.value = props.presetUrl
+      nickname.value = undefined
+    } else {
+      const res = await buildShareUrl(props.code, props.name)
+      url.value = res.url
+      nickname.value = res.nickname
+    }
     state.value = 'ready'
     await nextTick()
     if (canvas.value) {
-      await QRCode.toCanvas(canvas.value, res.url, { width: 256, margin: 1, errorCorrectionLevel: 'M' })
+      await QRCode.toCanvas(canvas.value, url.value, { width: 256, margin: 1, errorCorrectionLevel: 'M' })
     }
   } catch (e: unknown) {
     state.value = 'error'

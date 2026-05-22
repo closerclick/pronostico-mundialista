@@ -20,6 +20,9 @@ export interface SavedPrediction {
   /** true = entrada de RESULTADOS oficiales (única; sección aparte en la barra). */
   official?: boolean
   author?: SavedAuthor
+  /** Enlace original firmado (solo importados): se reusa al compartir/imprimir
+   *  un pronóstico ajeno, sin re-firmarlo con la identidad propia. */
+  sharedUrl?: string
   // Datos de resultados (solo locales; no viajan en el código compartido).
   mode?: GameMode
   results?: Results

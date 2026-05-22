@@ -9,7 +9,7 @@ import {
 } from './lib/prediction'
 import type { GameMode } from './lib/standings'
 import { encodePrediction, decodePrediction } from './lib/codec'
-import { parseShareFragment, buildShareUrl, getIdentity } from './lib/share'
+import { parseShareFragment, buildShareUrl, getIdentity, SHARE_BASE } from './lib/share'
 import {
   loadLibrary, saveLibrary, getActiveId, setActiveId, genId, type SavedPrediction,
 } from './lib/store'
@@ -134,6 +134,11 @@ const shareCode = computed(() => {
 
 // Nombre del pronóstico que se está compartiendo (viaja en el enlace, máx 50).
 const shareName = computed(() => library.value.find((p) => p.id === shareEntryId.value)?.name)
+// Enlace original de un pronóstico ajeno (para reusarlo sin re-firmar).
+const sharePreset = computed(() => {
+  const e = library.value.find((p) => p.id === shareEntryId.value)
+  return e && !e.mine ? (e.sharedUrl ?? null) : null
+})
 
 function openShare (id: string) {
   shareEntryId.value = id
@@ -187,9 +192,19 @@ function onIdentityClose () {
   nickPrompt.value = false
 }
 
-function tryShare (id: string) { ensureNick(() => guardComplete(id, () => openShare(id))) }
-function tryPrint (id: string) { ensureNick(() => guardComplete(id, () => printEntry(id))) }
-function tryPdf (id: string) { ensureNick(() => guardComplete(id, () => pdfEntry(id))) }
+// Compartir/imprimir un pronóstico AJENO reusa su enlace original (no se firma
+// con tu identidad ni se pide apodo, y no aplica el aviso de incompleto: no es
+// tuyo para completarlo). Si es propio, exige apodo y avisa si está incompleto.
+function shareGuard (id: string, action: (id: string) => void) {
+  const e = library.value.find((p) => p.id === id)
+  if (e && !e.mine) { action(id); return }
+  // Propio: primero el aviso de incompleto (inmediato) y luego, al continuar,
+  // se exige el apodo antes de firmar/compartir.
+  guardComplete(id, () => ensureNick(() => action(id)))
+}
+function tryShare (id: string) { shareGuard(id, openShare) }
+function tryPrint (id: string) { shareGuard(id, printEntry) }
+function tryPdf (id: string) { shareGuard(id, pdfEntry) }
 
 // Datos para la vista de impresión (PrintView).
 const printQr = ref('')
@@ -279,29 +294,34 @@ async function downloadPdf (url: string) {
 
 // Exportar a PDF directamente (sin abrir el modal): firma el código y dispara
 // la descarga del PDF con la misma hoja.
+// URL para QR/compartir de una entrada: si es AJENA y tenemos su enlace
+// original firmado, lo reusamos (no se re-firma con la identidad propia). Si es
+// propia, se firma el código actual con tu identidad.
+async function urlForEntry (entry: SavedPrediction): Promise<string> {
+  if (!entry.mine && entry.sharedUrl) return entry.sharedUrl
+  const code = entry.id === activeId.value ? encodePrediction(pred) : entry.code
+  return (await buildShareUrl(code, entry.name)).url
+}
+
 async function pdfEntry (id: string) {
   const entry = library.value.find((p) => p.id === id)
   if (!entry) return
   shareEntryId.value = id
-  const code = id === activeId.value ? encodePrediction(pred) : entry.code
   try {
-    const { url } = await buildShareUrl(code, entry.name)
-    await downloadPdf(url)
+    await downloadPdf(await urlForEntry(entry))
   } catch (e: unknown) {
     alert(t('pdf.error') + (e instanceof Error ? e.message : ''))
   }
 }
 
-// Imprimir directamente desde la barra lateral: firma el código para armar la
-// URL del QR y dispara el mismo flujo de impresión que el modal de compartir.
+// Imprimir directamente desde la barra lateral: arma la URL del QR y dispara el
+// mismo flujo de impresión que el modal de compartir.
 async function printEntry (id: string) {
   const entry = library.value.find((p) => p.id === id)
   if (!entry) return
   shareEntryId.value = id
-  const code = id === activeId.value ? encodePrediction(pred) : entry.code
   try {
-    const { url } = await buildShareUrl(code, entry.name)
-    await handlePrint(url)
+    await handlePrint(await urlForEntry(entry))
   } catch (e: unknown) {
     alert(t('pdf.printError') + (e instanceof Error ? e.message : ''))
   }
@@ -521,7 +541,8 @@ async function doImport () {
   importError.value = ''
   importing.value = true
   try {
-    const parsed = await parseShareFragment(extractFragment(importText.value))
+    const frag = extractFragment(importText.value)
+    const parsed = await parseShareFragment(frag)
     if (!parsed) throw new Error(t('store.invalidLink'))
     decodePrediction(parsed.code) // valida
     const entry: SavedPrediction = {
@@ -531,6 +552,7 @@ async function doImport () {
       updatedAt: Date.now(),
       mine: false,
       author: { publickey: parsed.publickey, nickname: parsed.nickname, verified: parsed.verified },
+      sharedUrl: `${SHARE_BASE}#${frag}`,
     }
     library.value.push(entry)
     saveLibrary(library.value)
@@ -566,6 +588,7 @@ async function importFromHash (frag: string): Promise<boolean> {
     id: genId(), name: parsed.name || parsed.nickname || t('store.sharedName'),
     code: parsed.code, updatedAt: Date.now(), mine: false,
     author: { publickey: parsed.publickey, nickname: parsed.nickname, verified: parsed.verified },
+    sharedUrl: `${SHARE_BASE}#${frag}`,
   }
   library.value.push(entry)
   saveLibrary(library.value)
@@ -787,6 +810,7 @@ onUnmounted(() => {
     <ShareModal
       :code="shareCode"
       :name="shareName"
+      :preset-url="sharePreset"
       :open="shareOpen"
       @close="shareOpen = false"
       @print="handlePrint"
