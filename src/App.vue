@@ -289,8 +289,10 @@ function openProfile () {
 function rateAuthor () {
   // Ya tenemos la clave pública del autor (viene firmada en el link): el panel
   // lo agrega como contacto por su clave (sin token) y permite valorarlo.
+  // Apodo: el del autor si lo tiene; si no, el NOMBRE del pronóstico como
+  // etiqueta de respaldo (también viaja en el link).
   identityFocus.value = activeEntry.value?.author?.publickey ?? null
-  identityFocusNick.value = activeEntry.value?.author?.nickname ?? null
+  identityFocusNick.value = activeEntry.value?.author?.nickname || activeEntry.value?.name || null
   identityOpen.value = true
 }
 
