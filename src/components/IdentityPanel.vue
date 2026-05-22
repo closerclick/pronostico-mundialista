@@ -8,7 +8,7 @@ import { resolveTokenToIdentity, ProxyTokenError } from '../lib/proxy'
 
 const { t } = useI18n()
 
-const props = defineProps<{ open: boolean; focusPubkey?: string | null; focusNick?: string | null }>()
+const props = defineProps<{ open: boolean; focusPubkey?: string | null; focusNick?: string | null; requireNick?: boolean }>()
 const emit = defineEmits<{ close: []; changed: [] }>()
 
 type Tab = 'perfil' | 'contactos' | 'rankings'
@@ -43,6 +43,8 @@ async function load () {
   unreachable.value = false
   myNick.value = inst.me?.nickname ?? ''
   nickDraft.value = myNick.value
+  // Si se exige apodo (para compartir), abrimos en Perfil.
+  if (props.requireNick) tab.value = 'perfil'
   await refresh()
   if (props.focusPubkey) {
     // Enfocados en un pubkey concreto (p.ej. el autor de un pronóstico firmado):
@@ -182,6 +184,7 @@ function myRatingOf (p: PeerInfo): number { return p.myRating?.rating ?? 0 }
 
       <!-- PERFIL -->
       <section v-show="tab === 'perfil'" class="body">
+        <p v-if="requireNick && !myNick" class="focus-note">{{ t('identity.requireNickShare') }}</p>
         <label class="lbl">{{ t('identity.nickLabel') }}</label>
         <div class="row">
           <input v-model="nickDraft" maxlength="40" :placeholder="t('identity.nickPlaceholder')" @keydown.stop />

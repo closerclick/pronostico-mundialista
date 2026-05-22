@@ -9,7 +9,7 @@ import {
 } from './lib/prediction'
 import type { GameMode } from './lib/standings'
 import { encodePrediction, decodePrediction } from './lib/codec'
-import { parseShareFragment, buildShareUrl } from './lib/share'
+import { parseShareFragment, buildShareUrl, getIdentity } from './lib/share'
 import {
   loadLibrary, saveLibrary, getActiveId, setActiveId, genId, type SavedPrediction,
 } from './lib/store'
@@ -154,9 +154,42 @@ function confirmWarn () {
   warn.value = null
   w?.run()
 }
-function tryShare (id: string) { guardComplete(id, () => openShare(id)) }
-function tryPrint (id: string) { guardComplete(id, () => printEntry(id)) }
-function tryPdf (id: string) { guardComplete(id, () => pdfEntry(id)) }
+// Antes de compartir/imprimir, exige tener apodo (para firmar con identidad):
+// si no hay, abre el perfil para ponerlo y continúa solo al guardarlo.
+const pendingShare = ref<null | (() => void)>(null)
+const nickPrompt = ref(false)
+async function ensureNick (run: () => void) {
+  const idi = await getIdentity()
+  if (idi && !idi.me?.nickname) {
+    pendingShare.value = run
+    nickPrompt.value = true
+    identityFocus.value = null
+    identityFocusNick.value = null
+    identityOpen.value = true
+    return
+  }
+  run()
+}
+async function onIdentityChanged () {
+  library.value = [...library.value]
+  const idi = await getIdentity()
+  if (pendingShare.value && idi?.me?.nickname) {
+    const run = pendingShare.value
+    pendingShare.value = null
+    nickPrompt.value = false
+    identityOpen.value = false
+    run()
+  }
+}
+function onIdentityClose () {
+  identityOpen.value = false
+  pendingShare.value = null
+  nickPrompt.value = false
+}
+
+function tryShare (id: string) { ensureNick(() => guardComplete(id, () => openShare(id))) }
+function tryPrint (id: string) { ensureNick(() => guardComplete(id, () => printEntry(id))) }
+function tryPdf (id: string) { ensureNick(() => guardComplete(id, () => pdfEntry(id))) }
 
 // Datos para la vista de impresión (PrintView).
 const printQr = ref('')
@@ -766,8 +799,9 @@ onUnmounted(() => {
       :open="identityOpen"
       :focus-pubkey="identityFocus"
       :focus-nick="identityFocusNick"
-      @close="identityOpen = false"
-      @changed="library = [...library]"
+      :require-nick="nickPrompt"
+      @close="onIdentityClose"
+      @changed="onIdentityChanged"
     />
 
     <!-- Cambios sin aplicar al cambiar de sección: aplicar o ignorar. -->
