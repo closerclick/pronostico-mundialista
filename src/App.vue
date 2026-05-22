@@ -489,8 +489,10 @@ async function doImport () {
 // Importa el pronóstico que viene en el #fragmento. Devuelve true si lo importó
 // (o si ya existía y lo seleccionó). Limpia el hash de la URL al terminar.
 async function importFromHash (frag: string): Promise<boolean> {
-  const parsed = await parseShareFragment(frag)
+  // Borramos el hash apenas lo leemos (antes de la verificación async), para que
+  // no quede en la URL ni se reprocese.
   history.replaceState(null, '', location.pathname + location.search)
+  const parsed = await parseShareFragment(frag)
   if (!parsed) return false
   try { decodePrediction(parsed.code) } catch { return false }
   // Si ya tenemos ese pronóstico importado, no duplicamos: lo seleccionamos.
