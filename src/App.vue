@@ -545,18 +545,16 @@ async function doImport () {
     const parsed = await parseShareFragment(frag)
     if (!parsed) throw new Error(t('store.invalidLink'))
     decodePrediction(parsed.code) // valida
-    const entry: SavedPrediction = {
-      id: genId(),
-      name: (parsed.name || parsed.nickname || t('store.importedName')),
-      code: parsed.code,
-      updatedAt: Date.now(),
-      mine: false,
-      author: { publickey: parsed.publickey, nickname: parsed.nickname, verified: parsed.verified },
-      sharedUrl: `${SHARE_BASE}#${frag}`,
+    // ¿Ya lo tenemos? lo seleccionamos en vez de duplicar.
+    const existing = library.value.find((p) => !p.official && p.code === parsed.code)
+    if (existing) {
+      select(existing.id)
+    } else {
+      const entry = buildIncomingEntry(parsed, frag, await isOwnAuthor(parsed.publickey))
+      library.value.push(entry)
+      saveLibrary(library.value)
+      select(entry.id)
     }
-    library.value.push(entry)
-    saveLibrary(library.value)
-    select(entry.id)
     tab.value = 'llaves'
     importOpen.value = false
     importText.value = ''
@@ -565,6 +563,33 @@ async function doImport () {
   } finally {
     importing.value = false
   }
+}
+
+// Construye la entrada de un pronóstico recibido. Si el autor es uno mismo
+// (misma clave pública), se guarda como PROPIO y editable; si no, como ajeno
+// (solo lectura) conservando su enlace original firmado.
+function buildIncomingEntry (parsed: NonNullable<Awaited<ReturnType<typeof parseShareFragment>>>, frag: string, isMine: boolean): SavedPrediction {
+  if (isMine) {
+    const p = decodePrediction(parsed.code)
+    return {
+      id: genId(), name: parsed.name || t('store.sharedName'), code: parsed.code,
+      updatedAt: Date.now(), mine: true,
+      mode: p.mode, results: p.results,
+      draftGroupOrder: p.groupOrder.map((a) => [...a]), draftThirdsRank: [...p.thirdsRank],
+    }
+  }
+  return {
+    id: genId(), name: parsed.name || parsed.nickname || t('store.sharedName'),
+    code: parsed.code, updatedAt: Date.now(), mine: false,
+    author: { publickey: parsed.publickey, nickname: parsed.nickname, verified: parsed.verified },
+    sharedUrl: `${SHARE_BASE}#${frag}`,
+  }
+}
+
+// ¿La clave pública del autor recibido es la mía? (entonces el pronóstico es propio)
+async function isOwnAuthor (publickey: string): Promise<boolean> {
+  const idi = await getIdentity()
+  return !!idi?.me?.publickey && idi.me.publickey === publickey
 }
 
 // Importa el pronóstico que viene en el #fragmento. Devuelve true si lo importó
@@ -576,20 +601,15 @@ async function importFromHash (frag: string): Promise<boolean> {
   const parsed = await parseShareFragment(frag)
   if (!parsed) return false
   try { decodePrediction(parsed.code) } catch { return false }
-  // Si ya tenemos ese pronóstico importado, no duplicamos: lo seleccionamos.
-  const existing = library.value.find((p) => !p.mine && !p.official && p.code === parsed.code)
+  // Si ya lo tenemos (propio o de amigo), no duplicamos: lo seleccionamos.
+  const existing = library.value.find((p) => !p.official && p.code === parsed.code)
   if (existing) {
-    if (parsed.name) existing.name = parsed.name
+    if (parsed.name && !existing.mine) existing.name = parsed.name
     select(existing.id)
     tab.value = 'llaves'
     return true
   }
-  const entry: SavedPrediction = {
-    id: genId(), name: parsed.name || parsed.nickname || t('store.sharedName'),
-    code: parsed.code, updatedAt: Date.now(), mine: false,
-    author: { publickey: parsed.publickey, nickname: parsed.nickname, verified: parsed.verified },
-    sharedUrl: `${SHARE_BASE}#${frag}`,
-  }
+  const entry = buildIncomingEntry(parsed, frag, await isOwnAuthor(parsed.publickey))
   library.value.push(entry)
   saveLibrary(library.value)
   select(entry.id)
