@@ -5,7 +5,7 @@ import {
   R32, ALL_LATER, FINAL, THIRD_PLACE, THIRD_SLOTS, allocateThirds,
   type Slot, type R32Match, type LaterMatch,
 } from './bracket'
-import { computeStandings, certainGroupOrder, type GameMode, type Results } from './standings'
+import { computeStandings, certainGroupOrder, GROUP_MATCH_COUNT, type GameMode, type Results } from './standings'
 
 export interface Prediction {
   // Modo de juego: 'winlose' (solo gana/empata/pierde) o 'score' (con marcador).
@@ -196,6 +196,29 @@ export function resolveMatches (p: Prediction): Map<number, ResolvedMatch> {
 
 export function champion (p: Prediction): number | null {
   return resolveMatches(p).get(FINAL.num)?.winner ?? null
+}
+
+/**
+ * % de llenado del pronóstico: cuántas decisiones necesarias están tomadas.
+ * Llaves: las 32 (R32→final + 3.º) con ganador decidido. En modos con
+ * resultados, además los 72 partidos de grupo cargados. (En 'manual' las
+ * posiciones ya están dadas, así que solo cuentan las llaves.)
+ */
+export function completeness (p: Prediction): { filled: number; total: number; pct: number } {
+  const resolved = resolveMatches(p)
+  let filled = 0
+  let total = 0
+  for (const mt of [...R32, ...ALL_LATER]) {
+    total++
+    if (resolved.get(mt.num)?.winner != null) filled++
+  }
+  if (p.mode !== 'manual') {
+    for (let i = 0; i < GROUP_MATCH_COUNT; i++) {
+      total++
+      if (p.results[i]) filled++
+    }
+  }
+  return { filled, total, pct: total ? Math.round((filled / total) * 100) : 0 }
 }
 
 /**

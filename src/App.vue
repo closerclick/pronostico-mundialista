@@ -5,7 +5,7 @@ import { setLocale, type Locale } from './i18n'
 import { GROUPS, teamById } from './lib/teams'
 import {
   defaultPrediction, clonePrediction, champion, prunePicks,
-  confirmStandings, hasPendingChanges, type Prediction,
+  confirmStandings, hasPendingChanges, completeness, type Prediction,
 } from './lib/prediction'
 import type { GameMode } from './lib/standings'
 import { encodePrediction, decodePrediction } from './lib/codec'
@@ -90,18 +90,9 @@ const officialEntry = computed(() => library.value.find((p) => p.official) ?? nu
 const championId = computed(() => champion(pred))
 
 // --- Modo de juego y resultados --------------------------------------------
-// Cambia el modo de juego. Si se vuelve a 'manual' estando en la pestaña de
-// resultados, regresamos a "Fase de grupos" (esa pestaña se oculta en manual).
-function setMode (m: GameMode) {
-  if (readonly.value || pred.mode === m) return
-  pred.mode = m
-  // Al pasar a manual, el borrador arranca desde lo confirmado (no arrastra uno viejo).
-  if (m === 'manual') {
-    pred.draftGroupOrder = pred.groupOrder.map((a) => [...a])
-    pred.draftThirdsRank = [...pred.thirdsRank]
-    if (tab.value === 'resultados') tab.value = 'grupos'
-  }
-}
+// El modo (tipo) se elige al CREAR el pronóstico y queda FIJO. Para cambiarlo
+// se clona a otro tipo (cloneToType). Etiqueta legible del modo activo:
+const activeModeName = computed(() => modeName(pred.mode))
 
 // ¿Hay resultados sin confirmar? (solo aplica en winlose/score). Reactivo: el
 // watch profundo de `pred` reevalúa este computed al cambiar resultados/modo.
@@ -121,10 +112,31 @@ const shareCode = computed(() => {
   return encodePrediction(pred)
 })
 
+// Nombre del pronóstico que se está compartiendo (viaja en el enlace, máx 50).
+const shareName = computed(() => library.value.find((p) => p.id === shareEntryId.value)?.name)
+
 function openShare (id: string) {
   shareEntryId.value = id
   shareOpen.value = true
 }
+
+// Si el pronóstico está incompleto, avisamos antes de compartir/imprimir/PDF
+// (no se bloquea: el usuario puede continuar igual).
+const warn = ref<null | { pct: number; run: () => void }>(null)
+function guardComplete (id: string, run: () => void) {
+  const p = predForEntry(id)
+  const pct = p ? completeness(p).pct : 100
+  if (pct >= 100) { run(); return }
+  warn.value = { pct, run }
+}
+function confirmWarn () {
+  const w = warn.value
+  warn.value = null
+  w?.run()
+}
+function tryShare (id: string) { guardComplete(id, () => openShare(id)) }
+function tryPrint (id: string) { guardComplete(id, () => printEntry(id)) }
+function tryPdf (id: string) { guardComplete(id, () => pdfEntry(id)) }
 
 // Datos para la vista de impresión (PrintView).
 const printQr = ref('')
@@ -220,7 +232,7 @@ async function pdfEntry (id: string) {
   shareEntryId.value = id
   const code = id === activeId.value ? encodePrediction(pred) : entry.code
   try {
-    const { url } = await buildShareUrl(code)
+    const { url } = await buildShareUrl(code, entry.name)
     await downloadPdf(url)
   } catch (e: unknown) {
     alert(t('pdf.error') + (e instanceof Error ? e.message : ''))
@@ -235,7 +247,7 @@ async function printEntry (id: string) {
   shareEntryId.value = id
   const code = id === activeId.value ? encodePrediction(pred) : entry.code
   try {
-    const { url } = await buildShareUrl(code)
+    const { url } = await buildShareUrl(code, entry.name)
     await handlePrint(url)
   } catch (e: unknown) {
     alert(t('pdf.printError') + (e instanceof Error ? e.message : ''))
@@ -327,6 +339,8 @@ function select (id: string) {
   pred.draftThirdsRank = entry.draftThirdsRank ? [...entry.draftThirdsRank] : [...pred.thirdsRank]
   // El oficial siempre en modo marcador y abriendo directo en "Resultados".
   if (entry.official) { pred.mode = 'score'; tab.value = 'resultados' }
+  // La pestaña Resultados no existe en modo Simple: si estaba activa, volvemos a Grupos.
+  else if (pred.mode === 'manual' && tab.value === 'resultados') tab.value = 'grupos'
   sidebarOpen.value = false
 }
 
@@ -353,16 +367,57 @@ function uniqueName () {
   return t('store.defaultName', { n })
 }
 
-function create () {
+// Nombre legible del modo (para nombres de clones, etc.).
+function modeName (m: GameMode): string {
+  return m === 'winlose' ? t('modes.medium') : m === 'score' ? t('modes.full') : t('modes.simple')
+}
+
+// Crea un pronóstico NUEVO con un tipo (modo) fijo elegido al crearlo.
+function create (mode: GameMode = 'manual') {
+  const p = defaultPrediction()
+  p.mode = mode
   const entry: SavedPrediction = {
     id: genId(), name: uniqueName(),
-    code: encodePrediction(defaultPrediction()),
+    code: encodePrediction(p), mode, results: {},
     updatedAt: Date.now(), mine: true,
   }
   library.value.push(entry)
   saveLibrary(library.value)
   select(entry.id)
-  tab.value = 'grupos'
+  tab.value = mode === 'manual' ? 'grupos' : 'resultados'
+}
+
+// Clona un pronóstico a OTRO tipo (modo): conserva sus datos y cambia el modo.
+function cloneToType (id: string, mode: GameMode) {
+  const src = library.value.find((p) => p.id === id)
+  if (!src) return
+  let p: Prediction
+  try { p = decodePrediction(src.code) } catch { p = defaultPrediction() }
+  p.mode = mode
+  if (src.results) p.results = JSON.parse(JSON.stringify(src.results))
+  const entry: SavedPrediction = {
+    id: genId(), name: src.name + ' · ' + modeName(mode),
+    code: encodePrediction(p), mode, results: p.results,
+    draftGroupOrder: src.draftGroupOrder, draftThirdsRank: src.draftThirdsRank,
+    updatedAt: Date.now(), mine: true,
+  }
+  library.value.push(entry)
+  saveLibrary(library.value)
+  select(entry.id)
+  tab.value = mode === 'manual' ? 'grupos' : 'resultados'
+}
+
+// Selector de tipo (modal): para "Nuevo" o "Clonar a otro tipo".
+const typePicker = ref<null | { action: 'new' } | { action: 'clone'; id: string }>(null)
+function cloneActive () {
+  if (activeId.value) typePicker.value = { action: 'clone', id: activeId.value }
+}
+function pickType (mode: GameMode) {
+  const p = typePicker.value
+  typePicker.value = null
+  if (!p) return
+  if (p.action === 'new') create(mode)
+  else cloneToType(p.id, mode)
 }
 
 function remove (id: string) {
@@ -412,7 +467,7 @@ async function doImport () {
     decodePrediction(parsed.code) // valida
     const entry: SavedPrediction = {
       id: genId(),
-      name: (parsed.nickname || t('store.importedName')),
+      name: (parsed.name || parsed.nickname || t('store.importedName')),
       code: parsed.code,
       updatedAt: Date.now(),
       mine: false,
@@ -446,7 +501,7 @@ onMounted(async () => {
       try {
         decodePrediction(parsed.code)
         const entry: SavedPrediction = {
-          id: genId(), name: parsed.nickname || t('store.sharedName'),
+          id: genId(), name: parsed.name || parsed.nickname || t('store.sharedName'),
           code: parsed.code, updatedAt: Date.now(), mine: false,
           author: { publickey: parsed.publickey, nickname: parsed.nickname, verified: parsed.verified },
         }
@@ -479,14 +534,15 @@ onUnmounted(() => {
       :active-id="activeId"
       @close="sidebarOpen = false"
       @select="select"
-      @create="create"
+      @create="typePicker = { action: 'new' }; sidebarOpen = false"
       @import="importOpen = true; sidebarOpen = false"
       @remove="remove"
       @rename="rename"
       @copy="copyToMine"
-      @share="openShare"
-      @print="printEntry"
-      @pdf="pdfEntry"
+      @clonetype="(id) => { typePicker = { action: 'clone', id }; sidebarOpen = false }"
+      @share="tryShare"
+      @print="tryPrint"
+      @pdf="tryPdf"
       @scoring="scoringOpen = true; sidebarOpen = false"
     />
     <div class="main">
@@ -544,14 +600,19 @@ onUnmounted(() => {
 
       <!-- Acciones del pronóstico ACTIVO (alineadas a la derecha) -->
       <div v-if="activeId" class="bar-actions" data-testid="bar-actions">
-        <button class="share-i" data-testid="bar-share" :title="t('common.share')" @click="openShare(activeId)">
+        <button class="share-i" data-testid="bar-share" :title="t('common.share')" @click="tryShare(activeId)">
           <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor" aria-hidden="true">
             <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z" />
           </svg>
         </button>
-        <button :title="t('common.print')" data-testid="bar-print" @click="printEntry(activeId)">🖨</button>
-        <button class="pdf-i" data-testid="bar-pdf" :title="t('common.pdf')" @click="pdfEntry(activeId)">
+        <button :title="t('common.print')" data-testid="bar-print" @click="tryPrint(activeId)">🖨</button>
+        <button class="pdf-i" data-testid="bar-pdf" :title="t('common.pdf')" @click="tryPdf(activeId)">
           <img src="/pdf.svg" alt="PDF" class="pdf-img" />
+        </button>
+        <button v-if="!isOfficial" class="clone-i" :title="t('modes.cloneToType')" data-testid="bar-clone" @click="cloneActive()">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true">
+            <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z" />
+          </svg>
         </button>
         <button v-if="!readonly && !isOfficial" :title="t('common.rename')" data-testid="bar-rename" @click="startEditName">✎</button>
         <button v-if="readonly" :title="t('common.editCopy')" data-testid="bar-copy" @click="copyToMine(activeId)">⎘</button>
@@ -560,13 +621,10 @@ onUnmounted(() => {
     </div>
 
     <!-- Selector de modo de juego (oculto en pronósticos importados). -->
+    <!-- El tipo (modo) se fija al crear; aquí solo se muestra y se puede clonar
+         a otro tipo. -->
     <div v-if="!readonly && !isOfficial" class="mode-bar" data-testid="mode-bar">
-      <span class="mode-label">{{ t('modes.label') }}</span>
-      <div class="mode-opts">
-        <button data-testid="mode-manual" :class="{ on: pred.mode === 'manual' }" @click="setMode('manual')" :title="t('modes.simpleTitle')">{{ t('modes.simple') }}</button>
-        <button data-testid="mode-winlose" :class="{ on: pred.mode === 'winlose' }" @click="setMode('winlose')" :title="t('modes.mediumTitle')">{{ t('modes.medium') }}</button>
-        <button data-testid="mode-score" :class="{ on: pred.mode === 'score' }" @click="setMode('score')" :title="t('modes.fullTitle')">{{ t('modes.full') }}</button>
-      </div>
+      <span class="mode-label">{{ t('modes.label') }} <strong class="mode-cur">{{ activeModeName }}</strong></span>
     </div>
 
     <!-- Franja de confirmación: visible cuando hay resultados sin aplicar. -->
@@ -630,11 +688,11 @@ onUnmounted(() => {
       </section>
 
       <section v-show="tab === 'resultados' && pred.mode !== 'manual'" class="scrolly" data-testid="zone-resultados">
-        <ResultsTab :pred="pred" :readonly="readonly" />
+        <ResultsTab :pred="pred" :readonly="readonly" :official="isOfficial ? null : officialEntry" />
       </section>
 
       <section v-show="tab === 'llaves'" data-testid="zone-llaves">
-        <BracketTab :pred="pred" :readonly="readonly || isOfficial" />
+        <BracketTab :pred="pred" :readonly="readonly || isOfficial" :official="isOfficial ? null : officialEntry" />
       </section>
 
       <section v-show="tab === 'puntajes'" class="scrolly" data-testid="zone-puntajes">
@@ -648,6 +706,7 @@ onUnmounted(() => {
 
     <ShareModal
       :code="shareCode"
+      :name="shareName"
       :open="shareOpen"
       @close="shareOpen = false"
       @print="handlePrint"
@@ -662,6 +721,35 @@ onUnmounted(() => {
       @close="identityOpen = false"
       @changed="library = [...library]"
     />
+
+    <!-- Aviso de pronóstico incompleto al compartir/imprimir. -->
+    <div v-if="warn" class="overlay" @click.self="warn = null">
+      <div class="warn-modal" data-testid="warn-incomplete">
+        <h3>⚠ {{ t('warn.title') }}</h3>
+        <p>{{ t('warn.msg', { pct: warn.pct }) }}</p>
+        <div class="warn-actions">
+          <button class="warn-cancel" @click="warn = null">{{ t('warn.cancel') }}</button>
+          <button class="warn-go" @click="confirmWarn">{{ t('warn.continue') }}</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Selector de tipo (Nuevo / Clonar a otro tipo). -->
+    <div v-if="typePicker" class="overlay" @click.self="typePicker = null">
+      <div class="type-modal" data-testid="type-picker">
+        <button class="x" @click="typePicker = null" :aria-label="t('common.close')">×</button>
+        <h3>{{ typePicker.action === 'new' ? t('typePicker.newTitle') : t('typePicker.cloneTitle') }}</h3>
+        <button class="type-opt" data-testid="type-manual" @click="pickType('manual')">
+          <strong>{{ t('modes.simple') }}</strong><span>{{ t('typePicker.simpleDesc') }}</span>
+        </button>
+        <button class="type-opt" data-testid="type-winlose" @click="pickType('winlose')">
+          <strong>{{ t('modes.medium') }}</strong><span>{{ t('typePicker.mediumDesc') }}</span>
+        </button>
+        <button class="type-opt" data-testid="type-score" @click="pickType('score')">
+          <strong>{{ t('modes.full') }}</strong><span>{{ t('typePicker.fullDesc') }}</span>
+        </button>
+      </div>
+    </div>
 
     <div v-if="importOpen" class="overlay" @click.self="importOpen = false">
       <div class="import-modal" data-testid="import-modal">
@@ -827,16 +915,48 @@ onUnmounted(() => {
   background: rgba(255, 255, 255, 0.015);
 }
 .mode-label { color: var(--muted); font-size: 0.8rem; font-weight: 700; }
-.mode-opts { display: flex; gap: 0.3rem; flex-wrap: wrap; }
-.mode-opts button {
-  background: transparent; color: var(--muted); border: 1px solid var(--line);
-  border-radius: 50px; padding: 0.35rem 0.85rem; cursor: pointer;
-  font-family: inherit; font-weight: 700; font-size: 0.8rem;
+.mode-cur { color: var(--azure); }
+.mode-clone {
+  margin-left: auto; background: transparent; color: var(--azure);
+  border: 1px solid var(--line); border-radius: 50px; padding: 0.3rem 0.8rem;
+  cursor: pointer; font-family: inherit; font-weight: 700; font-size: 0.78rem;
 }
-.mode-opts button:hover { background: rgba(255, 255, 255, 0.06); color: var(--text); }
-.mode-opts button.on {
-  background: var(--azure); color: #042038; border-color: var(--azure);
-  box-shadow: 0 0 10px rgba(65, 180, 255, 0.4);
+.mode-clone:hover { background: rgba(65, 180, 255, 0.14); }
+
+/* Modal selector de tipo (Nuevo / Clonar) */
+.type-modal {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
+  padding: 1.4rem; max-width: 360px; width: 100%; position: relative; box-shadow: var(--shadow);
+}
+.type-modal h3 { color: var(--azure); margin-bottom: 0.9rem; }
+.type-opt {
+  display: flex; flex-direction: column; gap: 0.15rem; width: 100%; text-align: left;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
+  padding: 0.7rem 0.85rem; margin-bottom: 0.5rem; cursor: pointer; color: var(--text);
+}
+.type-opt:hover { border-color: var(--azure); background: var(--panel-2); }
+.type-opt strong { color: var(--azure); }
+.type-opt span { color: var(--muted); font-size: 0.78rem; }
+.type-modal .x {
+  position: absolute; top: 0.5rem; right: 0.7rem; background: none; border: none;
+  color: var(--muted); font-size: 1.5rem; cursor: pointer; line-height: 1;
+}
+
+/* Aviso de incompleto */
+.warn-modal {
+  background: var(--panel); border: 1px solid var(--gold); border-radius: 16px;
+  padding: 1.4rem; max-width: 360px; width: 100%; box-shadow: var(--shadow);
+}
+.warn-modal h3 { color: var(--gold); margin-bottom: 0.6rem; }
+.warn-modal p { font-size: 0.88rem; color: var(--text); margin-bottom: 1rem; }
+.warn-actions { display: flex; gap: 0.5rem; justify-content: flex-end; }
+.warn-cancel {
+  background: transparent; color: var(--muted); border: 1px solid var(--line);
+  border-radius: 8px; padding: 0.5rem 1rem; cursor: pointer; font-weight: 700;
+}
+.warn-go {
+  background: var(--gold); color: #3a2e00; border: none; border-radius: 8px;
+  padding: 0.5rem 1rem; cursor: pointer; font-weight: 800;
 }
 
 /* Franja de confirmación de cambios pendientes */

@@ -6,16 +6,60 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { GROUPS, teamById, GROUP_LETTERS } from '../lib/teams'
-import { GROUP_PAIRS, groupMatchIndex, teamAt, computeStandings, koWinnerSide, type MatchResult, type Results } from '../lib/standings'
+import { GROUP_PAIRS, groupMatchIndex, teamAt, computeStandings, koWinnerSide, outcomeOf, type MatchResult, type Results } from '../lib/standings'
 import { resolveMatches, type Prediction, type ResolvedMatch } from '../lib/prediction'
+import { decodePrediction } from '../lib/codec'
 import { R32, R16, QF, SF, FINAL, THIRD_PLACE, type Slot } from '../lib/bracket'
+import { formatLocal, kickoffUTC } from '../lib/schedule'
+import type { SavedPrediction } from '../lib/store'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
-const props = defineProps<{ pred: Prediction; readonly?: boolean }>()
+// Enfrentamientos de un grupo ORDENADOS por fecha de partido (cronológico).
+// Devuelve { pi, pair } donde pi es el índice en GROUP_PAIRS.
+function groupMatches (g: number): { pi: number; pair: readonly [number, number] }[] {
+  return GROUP_PAIRS
+    .map((pair, pi) => ({ pi, pair: pair as readonly [number, number] }))
+    .sort((a, b) => {
+      const ka = kickoffUTC(groupMatchIndex(g, a.pi)) ?? ''
+      const kb = kickoffUTC(groupMatchIndex(g, b.pi)) ?? ''
+      return ka < kb ? -1 : ka > kb ? 1 : a.pi - b.pi
+    })
+}
+
+// Fecha/hora local de un partido (grupo: groupMatchIndex; eliminatoria: num),
+// o null si no hay dato en el calendario. La zona la resuelve el navegador.
+function kickoff (key: number): string | null {
+  return formatLocal(key, locale.value)
+}
+
+const props = defineProps<{ pred: Prediction; readonly?: boolean; official?: SavedPrediction | null }>()
 
 // Solo en modo 'score' mostramos los inputs de goles.
 const showGoals = computed(() => props.pred.mode === 'score')
+
+// --- Estrella en partidos que sumaron puntos vs los Resultados oficiales ---
+// (App pasa `official=null` cuando se está editando la entrada oficial.)
+const officialDecoded = computed(() => {
+  try { return props.official?.code ? decodePrediction(props.official.code) : null } catch { return null }
+})
+const officialResults = computed<Results>(() => props.official?.results ?? officialDecoded.value?.results ?? {})
+
+// Partido de grupo acertado (mismo gana/empata/pierde que el oficial).
+function scoredGroup (g: number, pair: number): boolean {
+  if (!props.official) return false
+  const idx = groupMatchIndex(g, pair)
+  const po = outcomeOf(props.pred.results[idx])
+  const oo = outcomeOf(officialResults.value[idx])
+  return po != null && oo != null && po === oo
+}
+// Llave acertada (mismo equipo que avanza que el oficial).
+function scoredKO (num: number): boolean {
+  if (!props.official) return false
+  const pw = resolved.value.get(num)?.winner ?? null
+  const ow = officialDecoded.value?.picks[num] ?? null
+  return pw != null && ow != null && pw === ow
+}
 
 // --- Eliminatorias (llaves) -----------------------------------------------
 // Resolución de cada partido de llave a equipos concretos (o null si el cupo
@@ -245,19 +289,20 @@ function fetchOfficial (): void {
         <div class="group-head">{{ t('group.title', { letter: grp.letter }) }}</div>
         <div class="match-list">
           <div
-            v-for="(pair, pi) in GROUP_PAIRS"
-            :key="pi"
+            v-for="mm in groupMatches(g)"
+            :key="mm.pi"
             class="match-row"
           >
+            <span v-if="scoredGroup(g, mm.pi)" class="scored-star" :title="t('scores.scored')">★</span>
             <div class="teams">
               <span class="side home">
-                <span class="flag">{{ teamById(teamAt(g, pair[0])).flag }}</span>
-                <span class="code">{{ teamById(teamAt(g, pair[0])).code }}</span>
+                <span class="flag">{{ teamById(teamAt(g, mm.pair[0])).flag }}</span>
+                <span class="code">{{ teamById(teamAt(g, mm.pair[0])).code }}</span>
               </span>
               <span class="vs">{{ t('common.vs') }}</span>
               <span class="side away">
-                <span class="code">{{ teamById(teamAt(g, pair[1])).code }}</span>
-                <span class="flag">{{ teamById(teamAt(g, pair[1])).flag }}</span>
+                <span class="code">{{ teamById(teamAt(g, mm.pair[1])).code }}</span>
+                <span class="flag">{{ teamById(teamAt(g, mm.pair[1])).flag }}</span>
               </span>
             </div>
 
@@ -270,8 +315,8 @@ function fetchOfficial (): void {
                 max="99"
                 inputmode="numeric"
                 :disabled="readonly"
-                :value="resultOf(g, pi)?.gh ?? ''"
-                @input="setGoals(g, pi, 'h', ($event.target as HTMLInputElement).value)"
+                :value="resultOf(g, mm.pi)?.gh ?? ''"
+                @input="setGoals(g, mm.pi, 'h', ($event.target as HTMLInputElement).value)"
               />
               <span class="dash">-</span>
               <input
@@ -281,8 +326,8 @@ function fetchOfficial (): void {
                 max="99"
                 inputmode="numeric"
                 :disabled="readonly"
-                :value="resultOf(g, pi)?.ga ?? ''"
-                @input="setGoals(g, pi, 'a', ($event.target as HTMLInputElement).value)"
+                :value="resultOf(g, mm.pi)?.ga ?? ''"
+                @input="setGoals(g, mm.pi, 'a', ($event.target as HTMLInputElement).value)"
               />
             </div>
 
@@ -291,25 +336,30 @@ function fetchOfficial (): void {
             <div v-if="!showGoals" class="picks">
               <button
                 class="pk"
-                :class="{ on: resultOf(g, pi)?.o === 0 }"
+                :class="{ on: resultOf(g, mm.pi)?.o === 0 }"
                 :disabled="readonly"
-                :title="t('results.winNamed', { team: teamById(teamAt(g, pair[0])).name })"
-                @click="setOutcome(g, pi, 0)"
-              >{{ teamById(teamAt(g, pair[0])).code }}</button>
+                :title="t('results.winNamed', { team: teamById(teamAt(g, mm.pair[0])).name })"
+                @click="setOutcome(g, mm.pi, 0)"
+              >{{ teamById(teamAt(g, mm.pair[0])).code }}</button>
               <button
                 class="pk draw"
-                :class="{ on: resultOf(g, pi)?.o === 1 }"
+                :class="{ on: resultOf(g, mm.pi)?.o === 1 }"
                 :disabled="readonly"
                 :title="t('results.draw')"
-                @click="setOutcome(g, pi, 1)"
+                @click="setOutcome(g, mm.pi, 1)"
               >–</button>
               <button
                 class="pk"
-                :class="{ on: resultOf(g, pi)?.o === 2 }"
+                :class="{ on: resultOf(g, mm.pi)?.o === 2 }"
                 :disabled="readonly"
-                :title="t('results.winNamed', { team: teamById(teamAt(g, pair[1])).name })"
-                @click="setOutcome(g, pi, 2)"
-              >{{ teamById(teamAt(g, pair[1])).code }}</button>
+                :title="t('results.winNamed', { team: teamById(teamAt(g, mm.pair[1])).name })"
+                @click="setOutcome(g, mm.pi, 2)"
+              >{{ teamById(teamAt(g, mm.pair[1])).code }}</button>
+            </div>
+
+            <!-- Fecha y hora local del partido (convertida desde UTC). -->
+            <div v-if="kickoff(groupMatchIndex(g, mm.pi))" class="kickoff">
+              {{ kickoff(groupMatchIndex(g, mm.pi)) }}
             </div>
           </div>
         </div>
@@ -323,6 +373,7 @@ function fetchOfficial (): void {
         <div class="ko-round-head">{{ t(round.titleKey) }}</div>
         <div class="ko-grid">
           <div v-for="num in round.nums" :key="num" class="ko-match">
+            <span v-if="scoredKO(num)" class="scored-star" :title="t('scores.scored')">★</span>
             <div class="ko-num">#{{ num }}</div>
 
             <!-- Lado local. -->
@@ -390,6 +441,9 @@ function fetchOfficial (): void {
                 @click="koChoose(num, rm(num)?.away ?? null)"
               >{{ t('results.advance') }}</button>
             </div>
+
+            <!-- Fecha y hora local del partido (convertida desde UTC). -->
+            <div v-if="kickoff(num)" class="kickoff">{{ kickoff(num) }}</div>
           </div>
         </div>
       </div>
@@ -422,13 +476,22 @@ function fetchOfficial (): void {
 .group-head { background: var(--green-d); padding: 0.5rem 0.85rem; font-weight: 700; letter-spacing: 0.03em; }
 .match-list { display: flex; flex-direction: column; }
 .match-row {
+  position: relative;
   display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
   padding: 0.5rem 0.7rem; border-top: 1px solid var(--line);
 }
+/* Estrella en partidos que sumaron puntos vs los resultados oficiales. */
+.scored-star {
+  position: absolute; top: 1px; left: 2px; z-index: 1;
+  color: var(--gold); font-size: 0.72rem; line-height: 1; pointer-events: none;
+  text-shadow: 0 0 4px rgba(255, 207, 63, 0.5);
+}
 .teams { display: flex; align-items: center; gap: 0.4rem; flex: 1; min-width: 9.5rem; }
 .side { display: inline-flex; align-items: center; gap: 0.3rem; }
-.side.home { justify-content: flex-end; flex: 1; }
-.side.away { justify-content: flex-start; flex: 1; }
+/* Equipos compactos a la izquierda: la 1.ª bandera marca el borde donde
+   arranca la fecha (que va en su propia línea, alineada a ese borde). */
+.side.home { justify-content: flex-start; flex: 0 0 auto; }
+.side.away { justify-content: flex-start; flex: 0 0 auto; }
 .flag { font-size: 1.15rem; line-height: 1; }
 .code { font-size: 0.85rem; font-weight: 700; }
 .vs { color: var(--muted); font-size: 0.75rem; }
@@ -451,6 +514,10 @@ function fetchOfficial (): void {
 .pk:hover:not(:disabled) { background: rgba(255, 255, 255, 0.06); color: var(--text); }
 .pk.on { background: var(--azure); color: #042038; border-color: var(--azure); }
 .pk:disabled { cursor: default; }
+
+/* Fecha/hora local del partido: línea chica y tenue debajo de cada fila. */
+.kickoff { flex-basis: 100%; color: var(--muted); font-size: 0.62rem; opacity: 0.85; margin-top: -0.3rem; }
+.ko-match .kickoff { margin-top: 0.1rem; padding: 0 0.3rem; }
 
 /* --- Eliminatorias --- */
 .ko { margin-top: 1.6rem; }

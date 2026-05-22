@@ -16,12 +16,15 @@ defineProps<{
   chosen: number | null
   clickable: boolean
   big?: boolean
+  /** true si en este cruce se acertó quién avanza (vs resultados oficiales). */
+  scored?: boolean
 }>()
 const emit = defineEmits<{ choose: [teamId: number | null] }>()
 </script>
 
 <template>
   <div class="match" :class="{ big }">
+    <span v-if="scored" class="scored-star" title="★">★</span>
     <button
       v-for="(s, i) in sides"
       :key="i"
@@ -45,8 +48,14 @@ const emit = defineEmits<{ choose: [teamId: number | null] }>()
 
 <style scoped>
 .match {
+  position: relative;
   background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
   overflow: hidden; display: flex; flex-direction: column;
+}
+/* Estrella: se acertó quién avanza en este cruce (vs resultados oficiales). */
+.scored-star {
+  position: absolute; top: 0; left: 1px; z-index: 2; pointer-events: none;
+  color: var(--gold); font-size: 0.6rem; line-height: 1; text-shadow: 0 0 4px rgba(255, 207, 63, 0.6);
 }
 .side {
   display: flex; flex-direction: column; align-items: center; justify-content: center;

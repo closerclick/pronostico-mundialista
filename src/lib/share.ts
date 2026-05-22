@@ -1,5 +1,18 @@
 // Firma del pronóstico con la identidad ECDSA P-256 del vault id.closer.click
 // y armado del enlace/QR de compartir hacia mundial.closer.click.
+//
+// Para que el QR sea lo más liviano posible, el payload se empaqueta en UN solo
+// blob binario (base64url una sola vez), en vez de un JSON con campos ya en
+// base64 (que duplicaba el tamaño). Layout (versión 1):
+//   [0]      versión (=1)
+//   [1..65)  firma ECDSA P-256 cruda (64 bytes)
+//   [65]     prefijo del punto comprimido de la clave pública (0x02/0x03)
+//   [66..98) coordenada X de la clave pública (32 bytes)  → punto comprimido
+//   [98..100) longitud del código (uint16 big-endian)
+//   [100..]  bytes del código del pronóstico
+//   [+]      apodo: 1 byte de longitud + UTF-8
+//   [+]      nombre: 1 byte de longitud + UTF-8 (máx 50 caracteres)
+// Los enlaces viejos (JSON) se siguen leyendo por compatibilidad.
 
 import { getIdentity } from './identity'
 
@@ -7,18 +20,23 @@ export { getIdentity }
 
 export const SHARE_BASE = 'https://mundial.closer.click/'
 
-// Payload que viaja en el fragmento (#) del enlace. Claves cortas para que el
-// QR sea lo más pequeño posible:
-//   c: código compacto del pronóstico
-//   s: firma ECDSA (base64) sobre JSON.stringify(c)
-//   x,y: coordenadas de la clave pública P-256 (base64url, como en el JWK)
-//   n: apodo del autor (opcional)
-export interface SharePayload {
-  c: string
-  s: string
-  x: string
-  y: string
-  n?: string
+const PAYLOAD_VERSION = 1
+
+// ---- base64 / base64url ----------------------------------------------------
+
+function b64ToBytes (b64: string): Uint8Array {
+  const bin = atob(b64)
+  const out = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
+  return out
+}
+function b64urlToBytes (s: string): Uint8Array {
+  return b64ToBytes(s.replace(/-/g, '+').replace(/_/g, '/'))
+}
+function bytesToB64url (bytes: Uint8Array): string {
+  let bin = ''
+  for (const b of bytes) bin += String.fromCharCode(b)
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }
 
 // El vault firma canonicalStringify(data); para un string eso es
@@ -27,29 +45,58 @@ function canonicalBytes (code: string): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(code))
 }
 
-function b64ToBytes (b64: string): Uint8Array {
-  const bin = atob(b64)
-  const out = new Uint8Array(bin.length)
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
+// ---- punto P-256: compresión y descompresión (BigInt) ----------------------
+
+const P256_P = 0xffffffff00000001000000000000000000000000ffffffffffffffffffffffffn
+const P256_B = 0x5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604bn
+const P256_A = P256_P - 3n
+
+function bytesToBig (b: Uint8Array): bigint {
+  let n = 0n
+  for (const x of b) n = (n << 8n) | BigInt(x)
+  return n
+}
+function bigTo32 (n: bigint): Uint8Array {
+  const out = new Uint8Array(32)
+  for (let i = 31; i >= 0; i--) { out[i] = Number(n & 0xffn); n >>= 8n }
+  return out
+}
+function modpow (base: bigint, exp: bigint, mod: bigint): bigint {
+  let r = 1n
+  base %= mod
+  while (exp > 0n) {
+    if (exp & 1n) r = (r * base) % mod
+    base = (base * base) % mod
+    exp >>= 1n
+  }
+  return r
+}
+
+// Reconstruye la coordenada Y (32 bytes) a partir de X y la paridad (prefijo
+// 0x03 → impar). P-256 cumple p ≡ 3 (mod 4): y = (y²)^((p+1)/4) mod p.
+function decompressY (xBytes: Uint8Array, odd: boolean): Uint8Array {
+  const x = bytesToBig(xBytes)
+  const rhs = (modpow(x, 3n, P256_P) + P256_A * x + P256_B) % P256_P
+  let y = modpow(rhs, (P256_P + 1n) / 4n, P256_P)
+  if ((y & 1n) !== (odd ? 1n : 0n)) y = P256_P - y
+  return bigTo32(y)
+}
+
+// ---- API -------------------------------------------------------------------
+
+function concatBytes (parts: Uint8Array[]): Uint8Array {
+  const total = parts.reduce((s, p) => s + p.length, 0)
+  const out = new Uint8Array(total)
+  let off = 0
+  for (const p of parts) { out.set(p, off); off += p.length }
   return out
 }
 
-function bytesToB64url (bytes: Uint8Array): string {
-  let bin = ''
-  for (const b of bytes) bin += String.fromCharCode(b)
-  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-}
-
-function b64urlToString (s: string): string {
-  const b64 = s.replace(/-/g, '+').replace(/_/g, '/')
-  return atob(b64)
-}
-
 /**
- * Firma el código del pronóstico y arma el enlace compartible.
+ * Firma el código del pronóstico y arma el enlace compartible (blob binario).
  * Lanza si no hay identidad disponible.
  */
-export async function buildShareUrl (code: string): Promise<{ url: string; publickey: string; nickname?: string }> {
+export async function buildShareUrl (code: string, name?: string): Promise<{ url: string; publickey: string; nickname?: string }> {
   const id = await getIdentity()
   if (!id) throw new Error('No se pudo conectar a la identidad (id.closer.click).')
 
@@ -57,51 +104,86 @@ export async function buildShareUrl (code: string): Promise<{ url: string; publi
   const jwk = JSON.parse(publickey) as { x: string; y: string }
   const nickname = id.me?.nickname
 
-  const payload: SharePayload = { c: code, s: signature, x: jwk.x, y: jwk.y }
-  if (nickname) payload.n = nickname
+  const sig = b64ToBytes(signature) // 64 bytes (r||s)
+  const xBytes = b64urlToBytes(jwk.x) // 32 bytes
+  const yBytes = b64urlToBytes(jwk.y) // 32 bytes
+  const prefix = (yBytes[31]! & 1) === 1 ? 0x03 : 0x02 // paridad de Y
+  const codeBytes = b64urlToBytes(code)
+  const enc = new TextEncoder()
+  const nickB = nickname ? enc.encode(nickname).slice(0, 255) : new Uint8Array(0)
+  const nameB = name ? enc.encode(name.trim().slice(0, 50)).slice(0, 255) : new Uint8Array(0)
 
-  const frag = bytesToB64url(new TextEncoder().encode(JSON.stringify(payload)))
-  return { url: `${SHARE_BASE}#${frag}`, publickey, nickname }
+  const blob = concatBytes([
+    Uint8Array.of(PAYLOAD_VERSION),
+    sig,
+    Uint8Array.of(prefix),
+    xBytes,
+    Uint8Array.of((codeBytes.length >> 8) & 0xff, codeBytes.length & 0xff),
+    codeBytes,
+    Uint8Array.of(nickB.length), nickB,
+    Uint8Array.of(nameB.length), nameB,
+  ])
+
+  return { url: `${SHARE_BASE}#${bytesToB64url(blob)}`, publickey, nickname }
 }
 
 export interface IncomingPrediction {
   code: string
   verified: boolean
   nickname?: string
+  /** nombre/título del pronóstico compartido (si vino en el enlace) */
+  name?: string
   /** clave pública JWK (string) reconstruida, identifica al autor */
   publickey: string
 }
 
-/** Lee y verifica un pronóstico desde el fragmento del enlace (sin el #). */
-export async function parseShareFragment (frag: string): Promise<IncomingPrediction | null> {
-  let payload: SharePayload
-  try {
-    payload = JSON.parse(new TextDecoder().decode(
-      Uint8Array.from(b64urlToString(frag), (c) => c.charCodeAt(0)),
-    ))
-  } catch { return null }
-  if (!payload?.c || !payload?.s || !payload?.x || !payload?.y) return null
-
-  const jwk = { kty: 'EC', crv: 'P-256', x: payload.x, y: payload.y, ext: true }
+async function verifyAndBuild (code: string, sig: Uint8Array, jwk: { kty: string; crv: string; x: string; y: string; ext: boolean }, nickname?: string, name?: string): Promise<IncomingPrediction> {
   let verified = false
   try {
-    const key = await crypto.subtle.importKey(
-      'jwk', jwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify'],
-    )
+    const key = await crypto.subtle.importKey('jwk', jwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify'])
     verified = await crypto.subtle.verify(
-      { name: 'ECDSA', hash: { name: 'SHA-256' } },
-      key,
-      b64ToBytes(payload.s) as BufferSource,
-      canonicalBytes(payload.c) as BufferSource,
+      { name: 'ECDSA', hash: { name: 'SHA-256' } }, key,
+      sig as BufferSource, canonicalBytes(code) as BufferSource,
     )
-  } catch (e) {
-    console.warn('Verificación de firma falló:', e)
-  }
+  } catch (e) { console.warn('Verificación de firma falló:', e) }
+  return { code, verified, nickname, name, publickey: JSON.stringify(jwk) }
+}
 
-  return {
-    code: payload.c,
-    verified,
-    nickname: payload.n,
-    publickey: JSON.stringify(jwk),
-  }
+/** Lee y verifica un pronóstico desde el fragmento del enlace (sin el #). */
+export async function parseShareFragment (frag: string): Promise<IncomingPrediction | null> {
+  let bytes: Uint8Array
+  try { bytes = b64urlToBytes(frag) } catch { return null }
+  if (bytes.length === 0) return null
+
+  // Formato viejo (JSON): el primer byte es '{' (0x7B).
+  if (bytes[0] === 0x7b) return parseJsonLegacy(bytes)
+
+  // Formato binario (versión 1).
+  if (bytes[0] !== PAYLOAD_VERSION) return null
+  try {
+    let pos = 1
+    const sig = bytes.slice(pos, pos + 64); pos += 64
+    const prefix = bytes[pos]!; pos += 1
+    const xBytes = bytes.slice(pos, pos + 32); pos += 32
+    const codeLen = (bytes[pos]! << 8) | bytes[pos + 1]!; pos += 2
+    const codeBytes = bytes.slice(pos, pos + codeLen); pos += codeLen
+    const nickLen = bytes[pos]!; pos += 1
+    const nick = nickLen ? new TextDecoder().decode(bytes.slice(pos, pos + nickLen)) : undefined; pos += nickLen
+    const nameLen = bytes[pos]!; pos += 1
+    const name = nameLen ? new TextDecoder().decode(bytes.slice(pos, pos + nameLen)) : undefined
+
+    const yBytes = decompressY(xBytes, prefix === 0x03)
+    const jwk = { kty: 'EC', crv: 'P-256', x: bytesToB64url(xBytes), y: bytesToB64url(yBytes), ext: true }
+    return verifyAndBuild(bytesToB64url(codeBytes), sig, jwk, nick, name)
+  } catch { return null }
+}
+
+// Compatibilidad con enlaces viejos en JSON.
+interface LegacyPayload { c: string; s: string; x: string; y: string; n?: string; t?: string }
+async function parseJsonLegacy (bytes: Uint8Array): Promise<IncomingPrediction | null> {
+  let payload: LegacyPayload
+  try { payload = JSON.parse(new TextDecoder().decode(bytes)) } catch { return null }
+  if (!payload?.c || !payload?.s || !payload?.x || !payload?.y) return null
+  const jwk = { kty: 'EC', crv: 'P-256', x: payload.x, y: payload.y, ext: true }
+  return verifyAndBuild(payload.c, b64ToBytes(payload.s), jwk, payload.n, payload.t?.slice(0, 50))
 }

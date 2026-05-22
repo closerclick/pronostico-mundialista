@@ -39,6 +39,10 @@ y escritorio con barra lateral fija).
 - **Completo** — cargás el **marcador** (goles) de cada partido; las posiciones
   se calculan con diferencia de gol y goles a favor.
 
+El tipo se **elige al crear** el pronóstico (con descripciones claras) y queda
+**fijo**; para cambiarlo se **clona a otro tipo** (acción ⧉, conserva los datos).
+Cada pronóstico muestra su **tipo** y su **% de llenado** en la barra lateral.
+
 En Medio/Completo aparece la pestaña **Resultados** (carga de partidos) y la
 pestaña Grupos muestra la tabla calculada (solo lectura). Un botón **Confirmar
 cambios** aplica las posiciones a las llaves (invalidando en cascada los picks
@@ -60,11 +64,16 @@ afectados); en Simple, confirmar aparece cuando el reordenado afecta las llaves.
   todos**, **Obtener oficial** (simulado hasta que empiece el Mundial).
 - En eliminatorias el que avanza lo decide el **marcador**; si hay empate,
   aparecen casilleros de **penales**.
+- Cada partido muestra su **fecha y hora local** (convertida desde UTC del
+  calendario oficial); los de grupo se listan **ordenados por fecha**.
 - Cada pronóstico se **puntúa** contra los resultados oficiales (chip de puntos
   en la barra lateral). Solo cuenta lo **cierto**: posiciones aseguradas (+3 c/u),
   aciertos de llaves por ronda (R32 +4 … final/campeón +20, 3.º +5), acierto
   1/–/2 por partido (+1, Medio y Completo) y marcador exacto (+2, solo Completo).
-  El panel **"¿Cómo se puntúa?"** lo explica con pestañas por modo.
+  El panel **"¿Cómo se puntúa?"** lo explica con pestañas por modo, y la pestaña
+  **Puntajes** detalla cada acierto (con su fase y fecha) y por qué suma.
+- En Resultados y en las Llaves, una **estrella** ⭐ marca los partidos donde el
+  pronóstico acertó (quién avanza / resultado).
 
 ### Multi-pronóstico + identidad
 - **Mis pronósticos** (editables), **Pronósticos amigos** (importados, solo
@@ -77,8 +86,14 @@ afectados); en Simple, confirmar aparece cuando el reordenado afecta las llaves.
 - El pronóstico se codifica COMPLETO en una cadena **base64url** (codec v3:
   modo + posiciones + ranking de terceros + ganadores de llaves + resultados con
   goles y penales) — todo lo necesario para **reconstruirlo desde el link**.
-- Se **firma con ECDSA P-256**, se arma `https://mundial.closer.click/#<payload>`
-  y se muestra como **QR**. Al importar/abrir un enlace se **verifica la firma**.
+- Se **firma con ECDSA P-256** y se arma `https://mundial.closer.click/#<payload>`
+  mostrado como **QR**. El payload va **empaquetado en un solo blob binario**
+  (versión + firma + **clave pública comprimida** de 33 bytes + código +
+  apodo + **nombre** del pronóstico, máx 50) y base64url **una vez** — QR liviano.
+  Al importar/abrir un enlace se **verifica la firma** y se reconstruye Y del
+  punto comprimido. Enlaces viejos en JSON se siguen leyendo.
+- Al **compartir/imprimir** un pronóstico **incompleto**, un modal avisa el % y
+  permite continuar igual (no bloquea).
 - Botones de **redes** (WhatsApp, Telegram, X, Facebook, Instagram/Web Share API).
 - **Imprimir** y **Descargar PDF** en una hoja **A4** (plantilla distinta por
   modo) con el QR firmado, vía `html2canvas` + `jspdf`.
@@ -103,8 +118,9 @@ src/
 │   ├── prediction.ts   estado, resolución por partido (certeza), prune en cascada
 │   ├── codec.ts        encode/decode compacto v3 (Lehmer + bits + base64url)
 │   ├── scoring.ts      puntuación de un pronóstico vs resultados oficiales
+│   ├── schedule.ts     fechas/horas UTC de los 104 partidos → hora local
 │   ├── identity.ts     singleton del vault id.closer.click
-│   ├── share.ts        firma/verificación ECDSA y enlace de compartir
+│   ├── share.ts        firma ECDSA + blob binario del enlace (punto comprimido)
 │   ├── proxy.ts        resolver token→identidad (challenge firmado por el proxy)
 │   ├── rating.ts       reputación derivada (web-of-trust)
 │   └── store.ts        librería de pronósticos en localStorage
@@ -113,7 +129,8 @@ src/
 │   ├── StandingsTable.vue                 tabla calculada (Medio/Completo)
 │   ├── ResultsTab.vue                     carga de resultados (grupos + llaves)
 │   ├── BracketTab.vue / MatchBox.vue      llaves simétricas con conectores
-│   ├── Sidebar.vue        librería + acciones + puntajes
+│   ├── Sidebar.vue        librería + acciones + tipo + % + puntajes
+│   ├── ScoresTab.vue      pestaña "Puntajes": desglose de aciertos y por qué
 │   ├── ShareModal.vue     QR + redes + imprimir/PDF
 │   ├── ScoringInfo.vue    panel "¿Cómo se puntúa?" (pestañas por modo)
 │   ├── IdentityPanel.vue  perfil / contactos / rankings

@@ -3,15 +3,28 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { teamById, GROUP_LETTERS } from '../lib/teams'
 import { resolveMatches, type Prediction, type ResolvedMatch } from '../lib/prediction'
+import { decodePrediction } from '../lib/codec'
 import { R32, R16, QF, SF, FINAL, THIRD_PLACE, type Slot } from '../lib/bracket'
 import MatchBox, { type SideView } from './MatchBox.vue'
+import type { SavedPrediction } from '../lib/store'
 
 const { t } = useI18n()
 
-const props = defineProps<{ pred: Prediction; readonly?: boolean }>()
+const props = defineProps<{ pred: Prediction; readonly?: boolean; official?: SavedPrediction | null }>()
 
 const resolved = computed(() => resolveMatches(props.pred))
 function m (num: number): ResolvedMatch | undefined { return resolved.value.get(num) }
+
+// Acierto de quién avanza en un cruce, vs los resultados oficiales (estrella).
+const officialPicks = computed<Record<number, number>>(() => {
+  try { return props.official?.code ? decodePrediction(props.official.code).picks : {} } catch { return {} }
+})
+function scoredKO (num: number): boolean {
+  if (!props.official) return false
+  const pw = resolved.value.get(num)?.winner ?? null
+  const ow = officialPicks.value[num] ?? null
+  return pw != null && ow != null && pw === ow
+}
 
 const r32Slots = new Map<number, { home: Slot; away: Slot }>(
   R32.map((x) => [x.num, { home: x.home, away: x.away }]),
@@ -121,6 +134,7 @@ function connectorsForCol (nums: number[]): Connector[] {
             :sides="sides(num)"
             :chosen="chosen(num)"
             :clickable="!readonly"
+            :scored="scoredKO(num)"
             @choose="choose(num, $event)"
           />
           <!-- Conectores hacia la columna siguiente (salen por la derecha). -->
@@ -152,6 +166,7 @@ function connectorsForCol (nums: number[]): Connector[] {
           :sides="sides(FINAL.num)"
           :chosen="chosen(FINAL.num)"
           :clickable="!readonly"
+          :scored="scoredKO(FINAL.num)"
           @choose="choose(FINAL.num, $event)"
         />
         <div v-if="championId != null" class="champ-name">
@@ -163,6 +178,7 @@ function connectorsForCol (nums: number[]): Connector[] {
             :sides="sides(THIRD_PLACE.num)"
             :chosen="chosen(THIRD_PLACE.num)"
             :clickable="!readonly"
+            :scored="scoredKO(THIRD_PLACE.num)"
             @choose="choose(THIRD_PLACE.num, $event)"
           />
         </div>
@@ -194,6 +210,7 @@ function connectorsForCol (nums: number[]): Connector[] {
             :sides="sides(num)"
             :chosen="chosen(num)"
             :clickable="!readonly"
+            :scored="scoredKO(num)"
             @choose="choose(num, $event)"
           />
         </div>

@@ -3,8 +3,28 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { SavedPrediction } from '../lib/store'
 import { scoreEntry } from '../lib/scoring'
+import { decodePrediction } from '../lib/codec'
+import { completeness } from '../lib/prediction'
 
 const { t } = useI18n()
+
+// Etiqueta corta del tipo (modo) del pronóstico. Si el entry no lo guarda
+// (importados), se lee del código.
+function modeLabel (p: SavedPrediction): string {
+  let m = p.mode
+  if (!m) { try { m = decodePrediction(p.code).mode } catch { m = 'manual' } }
+  return m === 'winlose' ? t('modes.medium') : m === 'score' ? t('modes.full') : t('modes.simple')
+}
+
+// % de llenado del pronóstico (para el chip de progreso).
+function fillPct (p: SavedPrediction): number {
+  try {
+    const pred = decodePrediction(p.code)
+    if (p.mode) pred.mode = p.mode
+    if (p.results) pred.results = p.results
+    return completeness(pred).pct
+  } catch { return 0 }
+}
 
 const props = defineProps<{
   open: boolean
@@ -19,6 +39,7 @@ const emit = defineEmits<{
   remove: [id: string]
   rename: [id: string]
   copy: [id: string]
+  clonetype: [id: string]
   share: [id: string]
   print: [id: string]
   pdf: [id: string]
@@ -73,7 +94,7 @@ const scores = computed<Record<string, number>>(() => {
           @click="emit('select', p.id)"
         >
           <span class="nm">
-            {{ p.name }}
+            <span class="nm-row">{{ p.name }} <small class="mode-tag">{{ modeLabel(p) }}</small> <small class="fill-tag" :class="{ full: fillPct(p) >= 100 }">{{ fillPct(p) }}%</small></span>
             <span v-if="officialEntry" class="score-chip" :title="t('sidebar.pointsTitle')">▦ {{ t('sidebar.points', { n: scores[p.id] ?? 0 }) }}</span>
           </span>
           <span class="tools">
@@ -85,6 +106,11 @@ const scores = computed<Record<string, number>>(() => {
             <button :title="t('common.print')" @click.stop="emit('print', p.id)">🖨</button>
             <button class="pdf-i" :title="t('common.pdf')" @click.stop="emit('pdf', p.id)">
               <img src="/pdf.svg" alt="PDF" class="pdf-img" />
+            </button>
+            <button :title="t('modes.cloneToType')" @click.stop="emit('clonetype', p.id)">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
+                <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z" />
+              </svg>
             </button>
             <button :title="t('common.rename')" @click.stop="emit('rename', p.id)">✎</button>
             <button :title="t('common.delete')" @click.stop="emit('remove', p.id)">🗑</button>
@@ -105,7 +131,7 @@ const scores = computed<Record<string, number>>(() => {
           @click="emit('select', p.id)"
         >
           <span class="nm">
-            {{ p.name }}
+            <span class="nm-row">{{ p.name }} <small class="mode-tag">{{ modeLabel(p) }}</small> <small class="fill-tag" :class="{ full: fillPct(p) >= 100 }">{{ fillPct(p) }}%</small></span>
             <small class="auth" :class="{ ok: p.author?.verified }">
               {{ p.author?.verified ? '✓' : '⚠' }} {{ p.author?.nickname || t('common.anonymous') }}
             </small>
@@ -121,7 +147,11 @@ const scores = computed<Record<string, number>>(() => {
             <button class="pdf-i" :title="t('common.pdf')" @click.stop="emit('pdf', p.id)">
               <img src="/pdf.svg" alt="PDF" class="pdf-img" />
             </button>
-            <button :title="t('sidebar.editCopyTitle')" @click.stop="emit('copy', p.id)">⎘</button>
+            <button :title="t('modes.cloneToType')" @click.stop="emit('clonetype', p.id)">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
+                <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z" />
+              </svg>
+            </button>
             <button :title="t('common.delete')" @click.stop="emit('remove', p.id)">🗑</button>
           </span>
         </div>
@@ -199,6 +229,13 @@ const scores = computed<Record<string, number>>(() => {
 }
 .scoring-btn:hover { background: rgba(65, 180, 255, 0.12); }
 .nm { display: flex; flex-direction: column; align-items: flex-start; font-size: 0.9rem; min-width: 0; }
+.nm-row { display: inline-flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; }
+.mode-tag {
+  font-size: 0.6rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--azure); border: 1px solid var(--line); border-radius: 5px; padding: 0 0.25rem;
+}
+.fill-tag { font-size: 0.62rem; font-weight: 700; color: var(--muted); }
+.fill-tag.full { color: var(--green); }
 .score-chip {
   margin-top: 0.2rem; align-self: flex-start; background: var(--azure); color: #04210f;
   font-weight: 800; font-size: 0.7rem; border-radius: 6px; padding: 0.05rem 0.4rem; white-space: nowrap;

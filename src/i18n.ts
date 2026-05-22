@@ -54,6 +54,20 @@ const es = {
     simpleTitle: 'Solo tabla de posiciones y terceros, a mano',
     mediumTitle: 'Gana / empata / pierde por partido',
     fullTitle: 'Con marcador (goles)',
+    cloneToType: 'Clonar a otro tipo',
+  },
+  warn: {
+    title: 'Pronóstico incompleto',
+    msg: 'Tu pronóstico está {pct}% completo. Podés compartirlo o imprimirlo igual, pero le faltan resultados por definir.',
+    continue: 'Continuar igual',
+    cancel: 'Cancelar',
+  },
+  typePicker: {
+    newTitle: 'Elegí el tipo de pronóstico',
+    cloneTitle: 'Clonar a otro tipo',
+    simpleDesc: 'El más fácil: arrastrás los equipos para ordenar cada grupo y armás las llaves. No cargás resultados de partidos.',
+    mediumDesc: 'Por cada partido elegís quién gana o si empatan. Con eso se arman solas las posiciones y las llaves.',
+    fullDesc: 'Lo más detallado: ponés el marcador (cuántos goles hizo cada equipo) en cada partido. Suma más puntos al acertar el resultado exacto.',
   },
   confirm: {
     msg: '⚠ Las llaves aún no reflejan el nuevo orden de posiciones.',
@@ -73,6 +87,7 @@ const es = {
     bracket: 'Llaves acertadas (quién avanza)',
     outcomes: 'Resultados acertados (gana/empata/pierde)',
     exact: 'Marcadores exactos',
+    scored: '¡Sumaste puntos en este partido!',
   },
   groupsTab: {
     hintReadonly: 'Pronóstico de solo lectura.',
@@ -310,6 +325,20 @@ const en: typeof es = {
     simpleTitle: 'Just the standings table and thirds, by hand',
     mediumTitle: 'Win / draw / lose per match',
     fullTitle: 'With score (goals)',
+    cloneToType: 'Clone to another type',
+  },
+  warn: {
+    title: 'Incomplete prediction',
+    msg: 'Your prediction is {pct}% complete. You can share or print it anyway, but some results are still undecided.',
+    continue: 'Continue anyway',
+    cancel: 'Cancel',
+  },
+  typePicker: {
+    newTitle: 'Choose the prediction type',
+    cloneTitle: 'Clone to another type',
+    simpleDesc: 'The easiest: drag teams to order each group and build the bracket. No match results.',
+    mediumDesc: 'For each match you pick who wins or if they draw. Standings and bracket build themselves.',
+    fullDesc: 'The most detailed: enter the score (how many goals each team scored) per match. Earns more points for exact scores.',
   },
   confirm: {
     msg: '⚠ The bracket does not yet reflect the new standings order.',
@@ -329,6 +358,7 @@ const en: typeof es = {
     bracket: 'Correct bracket picks (who advances)',
     outcomes: 'Correct results (win/draw/loss)',
     exact: 'Exact scores',
+    scored: 'You scored points in this match!',
   },
   groupsTab: {
     hintReadonly: 'Read-only prediction.',

@@ -6,14 +6,17 @@ import { test, expect, type Page } from '@playwright/test'
 // En un arranque limpio el único pronóstico es el "oficial" (solo lectura, modo
 // marcador), que oculta la barra de modo y abre en "Resultados". Creamos uno
 // propio editable para los smoke tests.
-async function createOwnPrediction (page: Page): Promise<void> {
+// El tipo (modo) se elige al crear con el selector de tipo y queda fijo.
+// mode: 'manual' | 'winlose' | 'score'.
+async function createOwnPrediction (page: Page, mode: 'manual' | 'winlose' | 'score' = 'manual'): Promise<void> {
   await page.goto('/')
   // El botón de menú solo se ve en viewport angosto; en desktop el cajón está
-  // siempre visible. Abrimos el menú si hace falta y creamos un pronóstico.
+  // siempre visible. Abrimos el menú si hace falta.
   const menu = page.getByTestId('menu-btn')
   if (await menu.isVisible()) await menu.click()
   await page.getByTestId('sb-new').click()
-  await expect(page.getByTestId('tab-grupos')).toHaveClass(/active/)
+  await page.getByTestId('type-picker').waitFor()
+  await page.getByTestId('type-' + mode).click()
 }
 
 test('la app carga y muestra las pestañas Grupos y Llaves', async ({ page }) => {
@@ -22,28 +25,22 @@ test('la app carga y muestra las pestañas Grupos y Llaves', async ({ page }) =>
   await expect(page.getByTestId('tab-llaves')).toBeVisible()
 })
 
-test('cambiar a modo Medio/Completo muestra Resultados; Simple la oculta', async ({ page }) => {
-  await createOwnPrediction(page)
-  await expect(page.getByTestId('mode-bar')).toBeVisible()
-
-  // En modo Simple (manual, por defecto) la pestaña Resultados no existe.
+test('el tipo elegido al crear define si hay pestaña Resultados', async ({ page }) => {
+  // Simple (manual): no existe la pestaña Resultados.
+  await createOwnPrediction(page, 'manual')
   await expect(page.getByTestId('tab-resultados')).toHaveCount(0)
 
-  // Medio (winlose) -> aparece Resultados.
-  await page.getByTestId('mode-winlose').click()
+  // Medio (winlose): aparece la pestaña Resultados.
+  await createOwnPrediction(page, 'winlose')
   await expect(page.getByTestId('tab-resultados')).toBeVisible()
 
-  // Completo (score) -> sigue visible.
-  await page.getByTestId('mode-score').click()
+  // Completo (score): también tiene Resultados.
+  await createOwnPrediction(page, 'score')
   await expect(page.getByTestId('tab-resultados')).toBeVisible()
-
-  // Volver a Simple (manual) -> se oculta.
-  await page.getByTestId('mode-manual').click()
-  await expect(page.getByTestId('tab-resultados')).toHaveCount(0)
 })
 
 test('cambiar de pestaña funciona', async ({ page }) => {
-  await createOwnPrediction(page)
+  await createOwnPrediction(page, 'manual')
 
   await expect(page.getByTestId('zone-grupos')).toBeVisible()
 

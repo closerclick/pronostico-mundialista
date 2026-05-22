@@ -6,7 +6,7 @@ import { buildShareUrl } from '../lib/share'
 
 const { t } = useI18n()
 
-const props = defineProps<{ code: string; open: boolean }>()
+const props = defineProps<{ code: string; open: boolean; name?: string }>()
 const emit = defineEmits<{ close: []; print: [url: string]; pdf: [url: string] }>()
 
 const canvas = ref<HTMLCanvasElement | null>(null)
@@ -21,7 +21,7 @@ async function generate () {
   error.value = ''
   copied.value = false
   try {
-    const res = await buildShareUrl(props.code)
+    const res = await buildShareUrl(props.code, props.name)
     url.value = res.url
     nickname.value = res.nickname
     state.value = 'ready'
