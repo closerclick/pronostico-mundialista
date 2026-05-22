@@ -23,6 +23,65 @@ El eje del ecosistema **[CloserClick](https://closer.click)** es el **autohosteo
 
 ---
 
+## Qué hace
+
+App cliente (Vue 3 + Vite + TS, PWA instalable) para armar tu pronóstico del
+**Mundial 2026** (48 selecciones, sorteo final del 5 dic 2025) y compartirlo
+**firmado** por QR.
+
+### Fase de grupos
+- 12 grupos (A–L) con banderas; **arrastra** cada equipo a su posición (1º–4º).
+- 1º y 2º clasifican directo; el bloque **Mejores terceros** lista los 12
+  terceros para ordenarlos: los **8 de arriba** clasifican a dieciseisavos.
+
+### Llaves
+- Se arman solas a partir de la fase de grupos (incluida la asignación de los 8
+  mejores terceros a sus cruces, respetando los grupos permitidos por posición
+  de bombo). Toca el equipo que avanza ronda a ronda hasta el **campeón**.
+- Numeración oficial de partidos (dieciseisavos 73–88 … final 104) y partido por
+  el tercer puesto.
+
+### Compartir
+- Todo el pronóstico se codifica en una cadena **base64url de ~22 caracteres**
+  (permutaciones de grupos + ranking de terceros + ganadores de cada llave,
+  empaquetados a nivel de bits).
+- Se **firma con tu identidad ECDSA P-256** del vault `id.closer.click`
+  (vía `@gatoseya/closer-click-identity`) y se arma un enlace
+  `https://mundial.closer.click/#<payload>` que se muestra como **QR**.
+- Al abrir un enlace compartido, la app **verifica la firma** (Web Crypto) y
+  muestra al autor; puedes “usar como base” para editarlo.
+
+## Estructura
+
+```
+src/
+├── lib/
+│   ├── teams.ts        48 equipos (12 grupos A–L, banderas) con id global estable
+│   ├── bracket.ts      estructura R32→final + asignación de mejores terceros
+│   ├── prediction.ts   estado del pronóstico y resolución a equipos por partido
+│   ├── codec.ts        encode/decode compacto (Lehmer + bits + base64url)
+│   └── share.ts        firma/verificación ECDSA y enlace de compartir
+├── components/
+│   ├── GroupCard.vue    grupo arrastrable (vuedraggable)
+│   ├── ThirdsBlock.vue  ranking de los 12 terceros
+│   ├── BracketTab.vue   llaves clicables
+│   └── ShareModal.vue   QR + enlace firmado
+└── App.vue              pestañas Grupos/Llaves + carga desde #hash
+```
+
+> Nota: la asignación de los 8 mejores terceros usa un emparejamiento
+> determinista que respeta los grupos permitidos por cada cruce. Aproxima el
+> anexo oficial de la FIFA (la combinación de 8 grupos determina los cruces).
+
+## Build
+
+```bash
+./build.sh         # instala deps si falta y compila a dist/
+# o: npm install && npm run build
+npm run dev        # desarrollo
+npm run typecheck  # vue-tsc
+```
+
 ## Estado
 
-🚧 En desarrollo — recién inicializado.
+✅ Funcional. Datos del sorteo final 2026 cargados.

@@ -1,0 +1,32 @@
+:root {
+  --bg: #0b1f12;
+  --bg-2: #102b1a;
+  --panel: #14331f;
+  --panel-2: #1b4128;
+  --line: rgba(255, 255, 255, 0.1);
+  --green: #2ecc71;
+  --green-d: #1b5e20;
+  --gold: #f1c40f;
+  --text: #eafff0;
+  --muted: rgba(234, 255, 240, 0.6);
+  --shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  color-scheme: dark;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  background: linear-gradient(160deg, var(--bg), var(--bg-2));
+  background-attachment: fixed;
+  color: var(--text);
+  min-height: 100vh;
+}
+
+#app { min-height: 100vh; }
+
+button { font-family: inherit; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--panel-2); border-radius: 6px; }
