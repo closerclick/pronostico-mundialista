@@ -1,0 +1,77 @@
+<script lang="ts">
+// Caja de un partido de eliminatorias: dos cupos (arriba/abajo) mostrando
+// bandera + código de país. Presentacional: recibe los datos ya resueltos.
+export interface SideView {
+  teamId: number | null
+  flag: string
+  code: string
+  /** etiqueta cuando el cupo está vacío (p.ej. "1.º A" o "Ganador 89") */
+  label: string
+}
+</script>
+
+<script setup lang="ts">
+defineProps<{
+  sides: [SideView, SideView]
+  chosen: number | null
+  clickable: boolean
+  big?: boolean
+}>()
+const emit = defineEmits<{ choose: [teamId: number | null] }>()
+</script>
+
+<template>
+  <div class="match" :class="{ big }">
+    <button
+      v-for="(s, i) in sides"
+      :key="i"
+      type="button"
+      class="side"
+      :class="{
+        picked: s.teamId != null && chosen === s.teamId,
+        empty: s.teamId == null,
+        clickable: clickable && s.teamId != null,
+      }"
+      @click="emit('choose', s.teamId)"
+    >
+      <template v-if="s.teamId != null">
+        <span class="flag">{{ s.flag }}</span>
+        <span class="code">{{ s.code }}</span>
+      </template>
+      <span v-else class="ph">{{ s.label }}</span>
+    </button>
+  </div>
+</template>
+
+<style scoped>
+.match {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  overflow: hidden; display: flex; flex-direction: column;
+}
+.side {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 1px; min-width: 0; min-height: 30px;
+  background: transparent; border: none; color: var(--text);
+  padding: 0.25rem 0.15rem; cursor: default; border-top: 1px solid var(--line);
+}
+.side:first-child { border-top: none; }
+.side.clickable { cursor: pointer; }
+.side.clickable:hover { background: var(--panel-2); }
+.side.picked { background: rgba(65, 180, 255, 0.24); box-shadow: inset 0 0 0 1px rgba(65, 180, 255, 0.5); }
+.side.picked .code { color: var(--green); }
+.flag { font-size: 1.15rem; line-height: 1; }
+.code { font-family: var(--font-display); font-size: 0.72rem; letter-spacing: 0.04em; line-height: 1; }
+.ph { font-size: 0.56rem; color: var(--muted); font-style: italic; text-align: center; line-height: 1.05; }
+
+.match.big { border-color: var(--gold); box-shadow: 0 0 18px rgba(255, 207, 63, 0.18); }
+.match.big .flag { font-size: 1.7rem; }
+.match.big .code { font-size: 0.95rem; }
+.match.big .side { min-height: 54px; padding: 0.5rem; }
+
+@media (min-width: 760px) {
+  .flag { font-size: 1.35rem; }
+  .code { font-size: 0.82rem; }
+  /* Sin bump de alto: en escritorio el bracket llena el alto disponible y los
+     partidos se distribuyen con space-around (ver BracketTab .board flex:1). */
+}
+</style>

@@ -1,140 +1,174 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { teamById } from '../lib/teams'
+import { teamById, GROUP_LETTERS } from '../lib/teams'
 import { resolveMatches, type Prediction, type ResolvedMatch } from '../lib/prediction'
-import { R32, R16, QF, SF, FINAL, THIRD_PLACE } from '../lib/bracket'
+import { R32, R16, QF, SF, FINAL, THIRD_PLACE, type Slot } from '../lib/bracket'
+import MatchBox, { type SideView } from './MatchBox.vue'
 
-const props = defineProps<{ pred: Prediction }>()
+const props = defineProps<{ pred: Prediction; readonly?: boolean }>()
 
 const resolved = computed(() => resolveMatches(props.pred))
-
-const rounds = computed(() => [
-  { title: 'Dieciseisavos', nums: R32.map((m) => m.num) },
-  { title: 'Octavos', nums: R16.map((m) => m.num) },
-  { title: 'Cuartos', nums: QF.map((m) => m.num) },
-  { title: 'Semifinales', nums: SF.map((m) => m.num) },
-  { title: 'Final', nums: [FINAL.num] },
-])
-
 function m (num: number): ResolvedMatch | undefined { return resolved.value.get(num) }
 
+const r32Slots = new Map<number, { home: Slot; away: Slot }>(
+  R32.map((x) => [x.num, { home: x.home, away: x.away }]),
+)
+const laterFrom = new Map<number, [number, number]>(
+  [...R16, ...QF, ...SF, THIRD_PLACE, FINAL].map((x) => [x.num, x.from]),
+)
+
+function slotLabel (slot: Slot): string {
+  if (slot.kind === 'W') return '1.º ' + GROUP_LETTERS[slot.group]
+  if (slot.kind === 'RU') return '2.º ' + GROUP_LETTERS[slot.group]
+  return '3.º'
+}
+
+function side (num: number, top: boolean): SideView {
+  const match = m(num)
+  const teamId = (top ? match?.home : match?.away) ?? null
+  if (teamId != null) {
+    const t = teamById(teamId)
+    return { teamId, flag: t.flag, code: t.code, label: '' }
+  }
+  let label = ''
+  const r32 = r32Slots.get(num)
+  if (r32) label = slotLabel(top ? r32.home : r32.away)
+  else if (num === THIRD_PLACE.num) label = 'Perdedor SF'
+  else {
+    const from = laterFrom.get(num)
+    if (from) label = 'Gan. ' + from[top ? 0 : 1]
+  }
+  return { teamId: null, flag: '', code: '', label }
+}
+
+function sides (num: number): [SideView, SideView] { return [side(num, true), side(num, false)] }
+function chosen (num: number): number | null { return props.pred.picks[num] ?? null }
+
+function choose (num: number, teamId: number | null) {
+  // Se permite elegir aunque el rival esté vacío (basta con que el cupo tocado
+  // tenga equipo).
+  if (props.readonly || teamId == null) return
+  if (props.pred.picks[num] === teamId) delete props.pred.picks[num]
+  else props.pred.picks[num] = teamId
+}
+
+const leftCols = [
+  { title: '16avos', nums: [74, 77, 73, 75, 83, 84, 81, 82] },
+  { title: 'Octavos', nums: [89, 90, 93, 94] },
+  { title: 'Cuartos', nums: [97, 98] },
+  { title: 'Semis', nums: [101] },
+]
+const rightCols = [
+  { title: 'Semis', nums: [102] },
+  { title: 'Cuartos', nums: [99, 100] },
+  { title: 'Octavos', nums: [91, 92, 95, 96] },
+  { title: '16avos', nums: [76, 78, 79, 80, 86, 88, 85, 87] },
+]
+
 const championId = computed(() => m(FINAL.num)?.winner ?? null)
-
-function setPick (num: number, side: 0 | 1) {
-  const match = m(num)
-  if (!match || match.home == null || match.away == null) return
-  props.pred.picks[num] = side
-}
-
-function pickedSide (num: number): 0 | 1 | null {
-  const match = m(num)
-  if (!match || match.home == null || match.away == null) return null
-  return props.pred.picks[num] ?? 0
-}
 </script>
 
 <template>
-  <div class="bracket-wrap">
-    <div v-if="championId != null" class="champion">
-      <span class="trophy">🏆</span>
-      <span class="champ-flag">{{ teamById(championId).flag }}</span>
-      <span class="champ-name">{{ teamById(championId).name }}</span>
-      <span class="champ-label">campeón</span>
-    </div>
+  <div class="bracket">
+    <p class="hint">
+      Dieciseisavos se llenan con los clasificados de grupos. Toca quién avanza
+      (toca de nuevo para vaciar la llave).
+    </p>
 
-    <p class="hint">Toca el equipo que avanza en cada llave.</p>
-
-    <div class="rounds">
-      <div v-for="round in rounds" :key="round.title" class="round">
-        <h4 class="round-title">{{ round.title }}</h4>
-        <div class="round-matches">
-          <div v-for="num in round.nums" :key="num" class="match">
-            <button
-              v-for="(teamId, idx) in [m(num)?.home, m(num)?.away]"
-              :key="idx"
-              class="side"
-              :class="{
-                picked: pickedSide(num) === idx,
-                empty: teamId == null,
-              }"
-              :disabled="teamId == null"
-              @click="setPick(num, idx as 0 | 1)"
-            >
-              <template v-if="teamId != null">
-                <span class="flag">{{ teamById(teamId).flag }}</span>
-                <span class="name">{{ teamById(teamId).name }}</span>
-              </template>
-              <template v-else>
-                <span class="tbd">—</span>
-              </template>
-            </button>
-            <span class="match-num">#{{ num }}</span>
-          </div>
+    <div class="board">
+      <div v-for="(col, ci) in leftCols" :key="'l' + ci" class="col">
+        <span class="col-title">{{ col.title }}</span>
+        <div class="col-matches">
+          <MatchBox
+            v-for="num in col.nums"
+            :key="num"
+            :sides="sides(num)"
+            :chosen="chosen(num)"
+            :clickable="!readonly"
+            @choose="choose(num, $event)"
+          />
         </div>
       </div>
-    </div>
 
-    <div class="third-place">
-      <h4 class="round-title">Tercer puesto</h4>
-      <div class="match wide">
-        <button
-          v-for="(teamId, idx) in [m(THIRD_PLACE.num)?.home, m(THIRD_PLACE.num)?.away]"
-          :key="idx"
-          class="side"
-          :class="{ picked: pickedSide(THIRD_PLACE.num) === idx, empty: teamId == null }"
-          :disabled="teamId == null"
-          @click="setPick(THIRD_PLACE.num, idx as 0 | 1)"
-        >
-          <template v-if="teamId != null">
-            <span class="flag">{{ teamById(teamId).flag }}</span>
-            <span class="name">{{ teamById(teamId).name }}</span>
-          </template>
-          <template v-else><span class="tbd">perdedor de semifinal</span></template>
-        </button>
+      <div class="col center">
+        <span class="trophy" :class="{ won: championId != null }">🏆</span>
+        <MatchBox
+          big
+          :sides="sides(FINAL.num)"
+          :chosen="chosen(FINAL.num)"
+          :clickable="!readonly"
+          @choose="choose(FINAL.num, $event)"
+        />
+        <div v-if="championId != null" class="champ-name">
+          {{ teamById(championId).flag }} {{ teamById(championId).name }}
+        </div>
+        <div class="third">
+          <span class="col-title">3.º puesto</span>
+          <MatchBox
+            :sides="sides(THIRD_PLACE.num)"
+            :chosen="chosen(THIRD_PLACE.num)"
+            :clickable="!readonly"
+            @choose="choose(THIRD_PLACE.num, $event)"
+          />
+        </div>
+      </div>
+
+      <div v-for="(col, ci) in rightCols" :key="'r' + ci" class="col">
+        <span class="col-title">{{ col.title }}</span>
+        <div class="col-matches">
+          <MatchBox
+            v-for="num in col.nums"
+            :key="num"
+            :sides="sides(num)"
+            :chosen="chosen(num)"
+            :clickable="!readonly"
+            @choose="choose(num, $event)"
+          />
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-.bracket-wrap { padding-bottom: 2rem; }
-.champion {
-  display: flex; align-items: center; justify-content: center; gap: 0.6rem;
-  background: linear-gradient(90deg, rgba(241,196,15,0.15), rgba(241,196,15,0.05));
-  border: 1px solid var(--gold); border-radius: 12px;
-  padding: 0.8rem 1rem; margin-bottom: 1rem; flex-wrap: wrap;
-}
-.trophy { font-size: 1.6rem; }
-.champ-flag { font-size: 1.8rem; }
-.champ-name { font-size: 1.3rem; font-weight: 800; color: var(--gold); }
-.champ-label { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
-.hint { text-align: center; color: var(--muted); font-size: 0.85rem; margin-bottom: 1rem; }
+.bracket { padding-bottom: 2rem; }
+.hint { text-align: center; color: var(--muted); font-size: 0.8rem; margin-bottom: 1rem; flex-shrink: 0; }
 
-.rounds { display: flex; gap: 1rem; overflow-x: auto; padding-bottom: 1rem; }
-.round { min-width: 180px; flex-shrink: 0; }
-.round-title { text-align: center; color: var(--green); font-size: 0.9rem; margin-bottom: 0.6rem; text-transform: uppercase; letter-spacing: 0.05em; }
-.round-matches { display: flex; flex-direction: column; gap: 0.7rem; }
-.match {
-  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-  overflow: hidden; position: relative;
+/* Las columnas reparten el ancho disponible y entran SIN scroll, tanto en
+   móvil como en escritorio. */
+.board {
+  display: flex; align-items: stretch; gap: 2px; padding-bottom: 1rem;
+  width: 100%; max-width: 100%; overflow: hidden;
 }
-.match.wide { max-width: 340px; margin: 0 auto; }
-.side {
-  display: flex; align-items: center; gap: 0.5rem; width: 100%;
-  background: transparent; border: none; color: var(--text);
-  padding: 0.5rem 0.6rem; cursor: pointer; text-align: left;
-  border-top: 1px solid var(--line);
+
+/* En escritorio el bracket llena el alto disponible (app-shell sin scroll
+   vertical): el tablero crece y space-around reparte los partidos. */
+@media (min-width: 960px) {
+  .bracket { height: 100%; display: flex; flex-direction: column; padding-bottom: 0; }
+  .board { flex: 1; min-height: 0; padding-bottom: 0; }
 }
-.side:first-child { border-top: none; }
-.side:hover:not(:disabled) { background: var(--panel-2); }
-.side.picked { background: rgba(46, 204, 113, 0.22); font-weight: 700; }
-.side.picked .name { color: var(--green); }
-.side:disabled { cursor: default; opacity: 0.5; }
-.side .flag { font-size: 1.2rem; }
-.side .name { font-size: 0.88rem; }
-.tbd { font-size: 0.8rem; color: var(--muted); font-style: italic; }
-.match-num {
-  position: absolute; top: 2px; right: 4px; font-size: 0.6rem; color: var(--muted);
+.col { display: flex; flex-direction: column; flex: 1 1 0; min-width: 0; }
+.col-title {
+  text-align: center; color: var(--green); font-size: 0.54rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.02em; margin-bottom: 0.3rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.third-place { margin-top: 1.5rem; }
+.col-matches {
+  flex: 1; display: flex; flex-direction: column; justify-content: space-around; gap: 0.25rem;
+}
+
+.center { flex: 1.4 1 0; justify-content: center; align-items: center; gap: 0.4rem; }
+.center > * { width: 100%; }
+.trophy { font-size: 1.7rem; text-align: center; filter: grayscale(1) opacity(0.4); transition: filter 0.3s; }
+.trophy.won { filter: none; text-shadow: 0 0 18px rgba(255, 207, 63, 0.6); }
+.champ-name { color: var(--gold); font-weight: 800; font-size: 0.78rem; text-align: center; }
+.third { margin-top: 0.6rem; }
+
+@media (min-width: 760px) {
+  /* Mismo reparto flexible, solo con más aire y tipografías mayores. */
+  .board { gap: 0.5rem; }
+  .center { flex: 1.6 1 0; }
+  .trophy { font-size: 2.6rem; }
+  .col-title { font-size: 0.7rem; }
+}
 </style>

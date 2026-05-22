@@ -4,7 +4,7 @@ import draggable from 'vuedraggable'
 import { teamById, GROUP_LETTERS } from '../lib/teams'
 import type { Prediction } from '../lib/prediction'
 
-const props = defineProps<{ pred: Prediction }>()
+const props = defineProps<{ pred: Prediction; readonly?: boolean }>()
 
 interface ThirdItem { group: number; teamId: number }
 
@@ -27,6 +27,7 @@ const items = computed<ThirdItem[]>({
       handle=".drag"
       :animation="160"
       ghost-class="ghost"
+      :disabled="readonly"
       class="thirds-list"
     >
       <template #item="{ element, index }">
@@ -35,7 +36,7 @@ const items = computed<ThirdItem[]>({
           <span class="flag">{{ teamById(element.teamId).flag }}</span>
           <span class="name">{{ teamById(element.teamId).name }}</span>
           <span class="grp">3º {{ GROUP_LETTERS[element.group] }}</span>
-          <span class="drag" aria-label="Reordenar">⋮⋮</span>
+          <span v-if="!readonly" class="drag" aria-label="Reordenar">⋮⋮</span>
         </div>
       </template>
     </draggable>
@@ -59,8 +60,8 @@ const items = computed<ThirdItem[]>({
   display: flex; align-items: center; gap: 0.55rem;
   padding: 0.5rem 0.7rem; border-top: 1px solid var(--line);
 }
-.third-row.in { background: rgba(46, 204, 113, 0.12); }
-.third-row.out { background: rgba(231, 76, 60, 0.08); opacity: 0.75; }
+.third-row.in { background: rgba(65, 180, 255, 0.14); }
+.third-row.out { background: rgba(231, 76, 60, 0.08); opacity: 0.7; }
 .rank { width: 1.5rem; text-align: center; font-weight: 700; font-size: 0.8rem; color: var(--muted); }
 .flag { font-size: 1.3rem; }
 .name { flex: 1; font-size: 0.95rem; }

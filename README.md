@@ -25,9 +25,11 @@ El eje del ecosistema **[CloserClick](https://closer.click)** es el **autohosteo
 
 ## Qué hace
 
-App cliente (Vue 3 + Vite + TS, PWA instalable) para armar tu pronóstico del
-**Mundial 2026** (48 selecciones, sorteo final del 5 dic 2025) y compartirlo
-**firmado** por QR.
+App cliente (Vue 3 + Vite + TS, PWA) para armar **varios** pronósticos del
+**Mundial 2026** (48 selecciones, sorteo final del 5 dic 2025), firmarlos con tu
+identidad y compartirlos por QR / redes / PDF. Tema visual "estadio nocturno"
+(azul) con tipografía Anton + Hanken Grotesk. Diseño responsive (móvil y
+escritorio con barra lateral fija).
 
 ### Fase de grupos
 - 12 grupos (A–L) con banderas; **arrastra** cada equipo a su posición (1º–4º).
@@ -35,38 +37,64 @@ App cliente (Vue 3 + Vite + TS, PWA instalable) para armar tu pronóstico del
   terceros para ordenarlos: los **8 de arriba** clasifican a dieciseisavos.
 
 ### Llaves
-- Se arman solas a partir de la fase de grupos (incluida la asignación de los 8
-  mejores terceros a sus cruces, respetando los grupos permitidos por posición
-  de bombo). Toca el equipo que avanza ronda a ronda hasta el **campeón**.
-- Numeración oficial de partidos (dieciseisavos 73–88 … final 104) y partido por
-  el tercer puesto.
+- Formato **simétrico** (mitades izquierda/derecha hacia la final central con
+  trofeo). Cada cupo muestra **bandera + código de país** (los vacíos, su
+  etiqueta: `1.º A`, `Gan. 89`, …).
+- Dieciseisavos se llenan con los clasificados de grupos; las rondas siguientes
+  arrancan **vacías** y se llenan al tocar quién avanza (tocar de nuevo vacía).
+  Se puede elegir ganador **aunque el rival aún esté vacío**.
+- Al cambiar la fase de grupos, los picks afectados se **invalidan en cascada**.
+- Numeración oficial (dieciseisavos 73–88 … final 104) + partido por el 3.º.
 
-### Compartir
-- Todo el pronóstico se codifica en una cadena **base64url de ~22 caracteres**
-  (permutaciones de grupos + ranking de terceros + ganadores de cada llave,
-  empaquetados a nivel de bits).
-- Se **firma con tu identidad ECDSA P-256** del vault `id.closer.click`
-  (vía `@gatoseya/closer-click-identity`) y se arma un enlace
-  `https://mundial.closer.click/#<payload>` que se muestra como **QR**.
-- Al abrir un enlace compartido, la app **verifica la firma** (Web Crypto) y
-  muestra al autor; puedes “usar como base” para editarlo.
+### Multi-pronóstico + identidad
+- Barra lateral con **mis pronósticos** (editables) e **importados** (de otras
+  personas, solo lectura). Crear, renombrar, eliminar, duplicar.
+- **Mi identidad** (vault `id.closer.click` vía `@gatoseya/closer-click-identity`):
+  perfil (apodo que firma), **contactos** (se agregan por **token** corto del
+  proxy, resuelto con un challenge/response firmado) y **rankings** (reputación
+  web-of-trust, valoración por estrellas).
+
+### Compartir / exportar
+- El pronóstico completo se codifica en una cadena **base64url** (permutaciones
+  de grupos + ranking de terceros + 2 bits por llave, empaquetados a bit).
+- Se **firma con ECDSA P-256** y se arma `https://mundial.closer.click/#<payload>`
+  mostrado como **QR**. Al abrir un enlace, la app **verifica la firma** y
+  muestra al autor (que puedes agregar a contactos / valorar).
+- Botones de **redes** (WhatsApp, Telegram, X, Facebook, Instagram vía Web Share API).
+- **Imprimir** y **Descargar PDF** (una sola hoja **A4 vertical**: grupos +
+  llaves + QR firmado, vía `html2canvas` + `jspdf`).
+
+### PWA
+- Instalable; iconos y favicon generados desde `images/logo.svg`
+  (`scripts/gen-icons.mjs`, corre en cada build).
+- **En desarrollo** el service worker es `selfDestroying` (sin caché: siempre
+  contenido fresco). Para producción, quitar `selfDestroying` en `vite.config.ts`
+  para reactivar la instalación de la PWA.
 
 ## Estructura
 
 ```
+images/logo.svg          fuente única de iconos/favicon del PWA
+scripts/gen-icons.mjs     genera icons + favicon desde el SVG
 src/
 ├── lib/
-│   ├── teams.ts        48 equipos (12 grupos A–L, banderas) con id global estable
+│   ├── teams.ts        48 equipos (grupos A–L, bandera, código FIFA, id estable)
 │   ├── bracket.ts      estructura R32→final + asignación de mejores terceros
-│   ├── prediction.ts   estado del pronóstico y resolución a equipos por partido
+│   ├── prediction.ts   estado, resolución por partido, prune en cascada
 │   ├── codec.ts        encode/decode compacto (Lehmer + bits + base64url)
-│   └── share.ts        firma/verificación ECDSA y enlace de compartir
+│   ├── identity.ts     singleton del vault id.closer.click
+│   ├── share.ts        firma/verificación ECDSA y enlace de compartir
+│   ├── proxy.ts        resolver token→identidad (challenge firmado por el proxy)
+│   ├── rating.ts       reputación derivada (web-of-trust)
+│   └── store.ts        librería de pronósticos en localStorage
 ├── components/
-│   ├── GroupCard.vue    grupo arrastrable (vuedraggable)
-│   ├── ThirdsBlock.vue  ranking de los 12 terceros
-│   ├── BracketTab.vue   llaves clicables
-│   └── ShareModal.vue   QR + enlace firmado
-└── App.vue              pestañas Grupos/Llaves + carga desde #hash
+│   ├── GroupCard.vue / ThirdsBlock.vue   grupos + terceros arrastrables
+│   ├── BracketTab.vue / MatchBox.vue     llaves simétricas clicables
+│   ├── Sidebar.vue        librería de pronósticos + acciones
+│   ├── ShareModal.vue     QR + redes + imprimir/PDF
+│   ├── IdentityPanel.vue  perfil / contactos / rankings
+│   └── PrintView.vue      hoja imprimible/PDF A4 portrait
+└── App.vue              cabecera, pestañas, carga desde #hash, impresión/PDF
 ```
 
 > Nota: la asignación de los 8 mejores terceros usa un emparejamiento
@@ -81,6 +109,9 @@ src/
 npm run dev        # desarrollo
 npm run typecheck  # vue-tsc
 ```
+
+Deploy a GitHub Pages (dominio `mundial.closer.click`) vía GitHub Actions en
+cada push a `main` (`.github/workflows/deploy.yml`).
 
 ## Estado
 

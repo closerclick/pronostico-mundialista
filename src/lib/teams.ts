@@ -11,6 +11,8 @@ export interface Team {
   name: string
   /** Emoji de bandera */
   flag: string
+  /** Código FIFA de 3 letras (p.ej. MEX) */
+  code: string
   /** Letra de grupo A..L */
   group: string
 }
@@ -21,32 +23,32 @@ export interface Group {
   teams: Team[]
 }
 
-// [nombre, emoji] en orden de sorteo, grupo por grupo A..L.
-const RAW: [string, string][][] = [
+// [nombre, emoji, código FIFA] en orden de sorteo, grupo por grupo A..L.
+const RAW: [string, string, string][][] = [
   // A
-  [['México', '🇲🇽'], ['Sudáfrica', '🇿🇦'], ['Corea del Sur', '🇰🇷'], ['Chequia', '🇨🇿']],
+  [['México', '🇲🇽', 'MEX'], ['Sudáfrica', '🇿🇦', 'RSA'], ['Corea del Sur', '🇰🇷', 'KOR'], ['Chequia', '🇨🇿', 'CZE']],
   // B
-  [['Canadá', '🇨🇦'], ['Bosnia y Herzegovina', '🇧🇦'], ['Catar', '🇶🇦'], ['Suiza', '🇨🇭']],
+  [['Canadá', '🇨🇦', 'CAN'], ['Bosnia y Herzegovina', '🇧🇦', 'BIH'], ['Catar', '🇶🇦', 'QAT'], ['Suiza', '🇨🇭', 'SUI']],
   // C
-  [['Brasil', '🇧🇷'], ['Marruecos', '🇲🇦'], ['Haití', '🇭🇹'], ['Escocia', '🏴\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}']],
+  [['Brasil', '🇧🇷', 'BRA'], ['Marruecos', '🇲🇦', 'MAR'], ['Haití', '🇭🇹', 'HAI'], ['Escocia', '🏴\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}', 'SCO']],
   // D
-  [['Estados Unidos', '🇺🇸'], ['Paraguay', '🇵🇾'], ['Australia', '🇦🇺'], ['Turquía', '🇹🇷']],
+  [['Estados Unidos', '🇺🇸', 'USA'], ['Paraguay', '🇵🇾', 'PAR'], ['Australia', '🇦🇺', 'AUS'], ['Turquía', '🇹🇷', 'TUR']],
   // E
-  [['Alemania', '🇩🇪'], ['Curazao', '🇨🇼'], ['Costa de Marfil', '🇨🇮'], ['Ecuador', '🇪🇨']],
+  [['Alemania', '🇩🇪', 'GER'], ['Curazao', '🇨🇼', 'CUW'], ['Costa de Marfil', '🇨🇮', 'CIV'], ['Ecuador', '🇪🇨', 'ECU']],
   // F
-  [['Países Bajos', '🇳🇱'], ['Japón', '🇯🇵'], ['Suecia', '🇸🇪'], ['Túnez', '🇹🇳']],
+  [['Países Bajos', '🇳🇱', 'NED'], ['Japón', '🇯🇵', 'JPN'], ['Suecia', '🇸🇪', 'SWE'], ['Túnez', '🇹🇳', 'TUN']],
   // G
-  [['Bélgica', '🇧🇪'], ['Egipto', '🇪🇬'], ['Irán', '🇮🇷'], ['Nueva Zelanda', '🇳🇿']],
+  [['Bélgica', '🇧🇪', 'BEL'], ['Egipto', '🇪🇬', 'EGY'], ['Irán', '🇮🇷', 'IRN'], ['Nueva Zelanda', '🇳🇿', 'NZL']],
   // H
-  [['España', '🇪🇸'], ['Cabo Verde', '🇨🇻'], ['Arabia Saudita', '🇸🇦'], ['Uruguay', '🇺🇾']],
+  [['España', '🇪🇸', 'ESP'], ['Cabo Verde', '🇨🇻', 'CPV'], ['Arabia Saudita', '🇸🇦', 'KSA'], ['Uruguay', '🇺🇾', 'URU']],
   // I
-  [['Francia', '🇫🇷'], ['Senegal', '🇸🇳'], ['Irak', '🇮🇶'], ['Noruega', '🇳🇴']],
+  [['Francia', '🇫🇷', 'FRA'], ['Senegal', '🇸🇳', 'SEN'], ['Irak', '🇮🇶', 'IRQ'], ['Noruega', '🇳🇴', 'NOR']],
   // J
-  [['Argentina', '🇦🇷'], ['Argelia', '🇩🇿'], ['Austria', '🇦🇹'], ['Jordania', '🇯🇴']],
+  [['Argentina', '🇦🇷', 'ARG'], ['Argelia', '🇩🇿', 'ALG'], ['Austria', '🇦🇹', 'AUT'], ['Jordania', '🇯🇴', 'JOR']],
   // K
-  [['Portugal', '🇵🇹'], ['RD Congo', '🇨🇩'], ['Uzbekistán', '🇺🇿'], ['Colombia', '🇨🇴']],
+  [['Portugal', '🇵🇹', 'POR'], ['RD Congo', '🇨🇩', 'COD'], ['Uzbekistán', '🇺🇿', 'UZB'], ['Colombia', '🇨🇴', 'COL']],
   // L
-  [['Inglaterra', '🏴\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}'], ['Croacia', '🇭🇷'], ['Ghana', '🇬🇭'], ['Panamá', '🇵🇦']],
+  [['Inglaterra', '🏴\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}', 'ENG'], ['Croacia', '🇭🇷', 'CRO'], ['Ghana', '🇬🇭', 'GHA'], ['Panamá', '🇵🇦', 'PAN']],
 ]
 
 export const GROUP_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L']
@@ -54,8 +56,8 @@ export const GROUP_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 
 export const TEAMS: Team[] = []
 export const GROUPS: Group[] = RAW.map((raw, gi) => {
   const letter = GROUP_LETTERS[gi]!
-  const teams = raw.map(([name, flag], pi) => {
-    const team: Team = { id: gi * 4 + pi, name: name!, flag: flag!, group: letter }
+  const teams = raw.map(([name, flag, code], pi) => {
+    const team: Team = { id: gi * 4 + pi, name: name!, flag: flag!, code: code!, group: letter }
     TEAMS.push(team)
     return team
   })

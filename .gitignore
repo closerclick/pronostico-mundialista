@@ -25,3 +25,6 @@ dist-ssr
 
 # Icons generados por scripts/gen-icons.mjs (se regeneran en build)
 public/icons/
+
+# Material de referencia local (no versionado)
+referencias/

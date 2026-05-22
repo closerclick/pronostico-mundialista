@@ -1,7 +1,9 @@
 // Firma del pronóstico con la identidad ECDSA P-256 del vault id.closer.click
 // y armado del enlace/QR de compartir hacia mundial.closer.click.
 
-import { Identity } from '@gatoseya/closer-click-identity'
+import { getIdentity } from './identity'
+
+export { getIdentity }
 
 export const SHARE_BASE = 'https://mundial.closer.click/'
 
@@ -17,18 +19,6 @@ export interface SharePayload {
   x: string
   y: string
   n?: string
-}
-
-let _idPromise: Promise<InstanceType<typeof Identity> | null> | null = null
-
-/** Conecta (una sola vez) al vault de identidad. Devuelve null si no alcanza. */
-export function getIdentity (): Promise<InstanceType<typeof Identity> | null> {
-  if (!_idPromise) {
-    _idPromise = Identity.connect()
-      .then((id) => id)
-      .catch((e) => { console.warn('Identity vault inalcanzable:', e); return null })
-  }
-  return _idPromise
 }
 
 // El vault firma canonicalStringify(data); para un string eso es

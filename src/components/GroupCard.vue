@@ -4,7 +4,7 @@ import draggable from 'vuedraggable'
 import { teamById, type Team } from '../lib/teams'
 import type { Prediction } from '../lib/prediction'
 
-const props = defineProps<{ pred: Prediction; group: number; letter: string }>()
+const props = defineProps<{ pred: Prediction; group: number; letter: string; readonly?: boolean }>()
 
 // v-model bidireccional: lee/escribe el orden de team ids del grupo.
 const teams = computed<Team[]>({
@@ -24,6 +24,7 @@ const POS = ['1º', '2º', '3º', '4º']
       handle=".drag"
       :animation="160"
       ghost-class="ghost"
+      :disabled="readonly"
       class="team-list"
     >
       <template #item="{ element, index }">
@@ -31,7 +32,7 @@ const POS = ['1º', '2º', '3º', '4º']
           <span class="pos">{{ POS[index] }}</span>
           <span class="flag">{{ element.flag }}</span>
           <span class="name">{{ element.name }}</span>
-          <span class="drag" aria-label="Reordenar">⋮⋮</span>
+          <span v-if="!readonly" class="drag" aria-label="Reordenar">⋮⋮</span>
         </div>
       </template>
     </draggable>
@@ -62,8 +63,8 @@ const POS = ['1º', '2º', '3º', '4º']
   background: var(--panel);
   cursor: default;
 }
-.team-row.qualifies { background: rgba(46, 204, 113, 0.12); }
-.team-row.third { background: rgba(241, 196, 15, 0.1); }
+.team-row.qualifies { background: rgba(65, 180, 255, 0.14); }
+.team-row.third { background: rgba(255, 207, 63, 0.1); }
 .pos { width: 1.6rem; font-size: 0.8rem; color: var(--muted); font-weight: 700; }
 .flag { font-size: 1.3rem; line-height: 1; }
 .name { flex: 1; font-size: 0.95rem; }

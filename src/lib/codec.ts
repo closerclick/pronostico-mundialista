@@ -1,17 +1,17 @@
 // Codificación compacta del pronóstico en la cadena más corta posible.
 //
 // Layout de bits (MSB primero):
-//   - versión            4 bits  (=1)
+//   - versión            4 bits  (=2)
 //   - 12 grupos × 5 bits         (rango factorial 0..23 de cada permutación de 4)
 //   - terceros          29 bits  (rango factorial 0..12!-1 de la permutación de 12)
-//   - 32 picks × 1 bit           (R32→final, 0/1 por partido)
-// Total: 125 bits ≈ 16 bytes ≈ 22 caracteres base64url.
+//   - 32 picks × 2 bits          (0 sin decidir, 1 = home/arriba, 2 = away/abajo)
+// Total: 157 bits ≈ 20 bytes ≈ 27 caracteres base64url.
 
 import { GROUPS } from './teams'
 import { R32, R16, QF, SF, THIRD_PLACE, FINAL } from './bracket'
-import { defaultPrediction, type Prediction } from './prediction'
+import { defaultPrediction, resolveMatches, type Prediction } from './prediction'
 
-const VERSION = 1
+const VERSION = 2
 
 // Orden fijo de partidos para los picks (debe permanecer estable).
 export const PICK_ORDER: number[] = [
@@ -114,7 +114,19 @@ export function encodePrediction (p: Prediction): string {
     w.write(permToIndex(p.groupOrder[g]!, base), 5)
   }
   w.write(permToIndex(p.thirdsRank, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]), 29)
-  for (const num of PICK_ORDER) w.write(p.picks[num] ?? 0, 1)
+  // El pick se guarda como lado (1=home, 2=away) según en qué cupo está hoy el
+  // equipo elegido; 0 si no hay elección o el equipo ya no está en la llave.
+  const resolved = resolveMatches(p)
+  for (const num of PICK_ORDER) {
+    const m = resolved.get(num)
+    const chosen = p.picks[num]
+    let side = 0
+    if (m && chosen != null) {
+      if (chosen === m.home) side = 1
+      else if (chosen === m.away) side = 2
+    }
+    w.write(side, 2)
+  }
   return bytesToB64url(w.toBytes())
 }
 
@@ -128,10 +140,18 @@ export function decodePrediction (code: string): Prediction {
     p.groupOrder[g] = indexToPerm(r.read(5), base)
   }
   p.thirdsRank = indexToPerm(r.read(29), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+  // Lee los lados y reconstruye los team id resolviendo de forma incremental:
+  // cada partido depende solo de los anteriores en PICK_ORDER (R32→final), que
+  // ya quedaron decididos al llegar a él.
   p.picks = {}
-  for (const num of PICK_ORDER) {
-    const bit = r.read(1)
-    if (bit) p.picks[num] = 1
-  }
+  const sides = PICK_ORDER.map(() => r.read(2))
+  PICK_ORDER.forEach((num, i) => {
+    const side = sides[i]
+    if (side === 1 || side === 2) {
+      const m = resolveMatches(p).get(num)
+      const teamId = side === 1 ? m?.home : m?.away
+      if (teamId != null) p.picks[num] = teamId
+    }
+  })
   return p
 }

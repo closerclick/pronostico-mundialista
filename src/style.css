@@ -1,32 +1,70 @@
 :root {
-  --bg: #0b1f12;
-  --bg-2: #102b1a;
-  --panel: #14331f;
-  --panel-2: #1b4128;
-  --line: rgba(255, 255, 255, 0.1);
-  --green: #2ecc71;
-  --green-d: #1b5e20;
-  --gold: #f1c40f;
-  --text: #eafff0;
-  --muted: rgba(234, 255, 240, 0.6);
-  --shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+  /* "Estadio nocturno bajo reflectores": azul medianoche + azul eléctrico + oro */
+  --pitch-0: #060e20;
+  --pitch-1: #0a1730;
+  --bg: var(--pitch-0);
+  --bg-2: var(--pitch-1);
+  --panel: #0f2143;
+  --panel-2: #173159;
+  --line: rgba(91, 173, 255, 0.18);
+  --line-soft: rgba(233, 242, 255, 0.08);
 
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  --azure: #41b4ff;
+  --azure-dim: #1e6fd0;
+  --lime: var(--azure);
+  --lime-dim: var(--azure-dim);
+  --green: var(--azure);
+  --green-d: #102a52;
+  --gold: #ffcf3f;
+
+  --text: #eaf2ff;
+  --chalk: #eaf2ff;
+  --muted: rgba(234, 242, 255, 0.55);
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+
+  --font-display: 'Anton', 'Hanken Grotesk', sans-serif;
+  --font-body: 'Hanken Grotesk', system-ui, sans-serif;
+
+  font-family: var(--font-body);
   color-scheme: dark;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 html, body {
-  background: linear-gradient(160deg, var(--bg), var(--bg-2));
+  background-color: var(--pitch-0);
+  /* glow de reflector arriba + rayas de cancha muy sutiles */
+  background-image:
+    radial-gradient(120% 80% at 50% -10%, rgba(65, 180, 255, 0.16), transparent 60%),
+    repeating-linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.02) 0 64px,
+      transparent 64px 128px
+    );
   background-attachment: fixed;
   color: var(--text);
   min-height: 100vh;
+  -webkit-text-size-adjust: 100%;
 }
 
 #app { min-height: 100vh; }
 
+h1, h2, h3, h4 { font-family: var(--font-display); font-weight: 400; letter-spacing: 0.01em; }
+
 button { font-family: inherit; }
 
-::-webkit-scrollbar { width: 10px; height: 10px; }
+a { color: var(--lime); }
+
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--panel-2); border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: var(--lime-dim); }
+
+/* Códigos de país / números: tipografía de señalética */
+.mono-code { font-family: var(--font-display); letter-spacing: 0.06em; }
+
+/* Impresión: ocultar la app normal; solo se imprime PrintView (una página). */
+@media print {
+  body { background: #fff; }
+  .shell { display: none !important; }
+}
