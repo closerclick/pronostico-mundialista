@@ -551,21 +551,16 @@ onUnmounted(() => {
    alto del viewport y la página no scrollea; es el área de contenido la que
    maneja (si hace falta) su propio scroll interno. */
 @media (min-width: 960px) {
+  /* App-shell: la barra lateral ocupa todo el alto y NO scrollea la página.
+     El área de contenido tiene su PROPIO scroll, así nada se recorta y la
+     barra lateral siempre llega al fondo. */
   .shell { display: flex; align-items: stretch; height: 100vh; overflow: hidden; }
-  .main { flex: 1; height: 100vh; min-height: 0; }
+  .main { flex: 1; height: 100vh; min-height: 0; display: flex; flex-direction: column; }
   .menu { display: none; }
   .scoreboard { padding-left: 1.2rem; }
 
-  /* El contenido es una columna flexible que llena el alto restante. */
-  .content { display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
-  .content > section { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-
-  /* Grupos: muchos grupos, se permite scroll vertical interno. */
-  .content > section.scrolly { overflow-y: auto; }
-
-  /* Llaves: sin scroll; el bracket llena el alto disponible. */
-
-  /* En escritorio el footer no debe empujar el alto. */
+  /* El contenido scrollea internamente (grupos+terceros o llaves completas). */
+  .content { flex: 1; min-height: 0; overflow-y: auto; }
   .footer { flex-shrink: 0; }
 }
 

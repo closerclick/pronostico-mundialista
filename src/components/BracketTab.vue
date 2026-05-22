@@ -143,10 +143,6 @@ const championId = computed(() => m(FINAL.num)?.winner ?? null)
 
 /* En escritorio el bracket llena el alto disponible (app-shell sin scroll
    vertical): el tablero crece y space-around reparte los partidos. */
-@media (min-width: 960px) {
-  .bracket { height: 100%; display: flex; flex-direction: column; padding-bottom: 0; }
-  .board { flex: 1; min-height: 0; padding-bottom: 0; }
-}
 .col { display: flex; flex-direction: column; flex: 1 1 0; min-width: 0; }
 .col-title {
   text-align: center; color: var(--green); font-size: 0.54rem; font-weight: 700;
