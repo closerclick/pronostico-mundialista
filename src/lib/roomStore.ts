@@ -26,7 +26,20 @@ export interface RoomMember {
   /** modo y resultados locales del pronóstico (no viajan en el código) */
   mode?: GameMode
   results?: Results
-  /** marca temporal de la última versión recibida (last-write-wins) */
+  /** sello de tiempo del sellador: cuándo existió este pronóstico (ms epoch) */
+  sealedAt?: number
+  /** ¿el sello del sellador verificó contra la pubkey pineada? */
+  sealValid?: boolean
+  /** tombstone: el autor borró su aporte (se conserva como lápida para que un
+   *  reenvío de un sobre viejo no lo "reviva"). */
+  deleted?: boolean
+  /** sobre FIRMADO por el autor (`{r,f|d,t}`), tal cual viaja: permite reenviarlo
+   *  a terceros sin alterarlo (gossip). */
+  env?: string
+  /** versión puesta por el AUTOR (ms epoch del sobre): clave de last-write-wins.
+   *  Mayor gana → re-aportar/borrar le gana a lo anterior. Ausente = legacy (0). */
+  version?: number
+  /** marca temporal local de la última versión recibida (bookkeeping/cloud) */
   updatedAt: number
 }
 
@@ -100,11 +113,16 @@ export function isMemberSealed (room: Room, member: RoomMember, myPubkey: string
   return room.sealedUntil > Date.now()
 }
 
-/** Inserta o reemplaza (por publickey, last-write-wins) un miembro en una sala. */
+/**
+ * Inserta o reemplaza un miembro (por publickey) con last-write-wins por la
+ * VERSIÓN del autor (`version`, ms del sobre firmado). Un tombstone con version
+ * mayor le gana al pronóstico; re-aportar con version mayor le gana al tombstone.
+ * Devuelve true si cambió el estado.
+ */
 export function upsertMember (room: Room, member: RoomMember): boolean {
   const i = room.members.findIndex((m) => m.publickey === member.publickey)
   if (i < 0) { room.members.push(member); room.updatedAt = Date.now(); return true }
-  if (member.updatedAt >= room.members[i]!.updatedAt) {
+  if ((member.version ?? 0) >= (room.members[i]!.version ?? 0)) {
     room.members[i] = member
     room.updatedAt = Date.now()
     return true

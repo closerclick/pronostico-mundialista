@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { reactive, ref, computed, watch, onMounted, onUnmounted, nextTick, provide } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { setLocale, type Locale } from './i18n'
 import { GROUPS, teamById } from './lib/teams'
@@ -55,8 +55,8 @@ const section = ref<'predictions' | 'rooms'>('predictions')
 const inviteToast = ref<IncomingInvite | null>(null)
 let inbox: RoomInbox | null = null
 const {
-  initRooms, importRoomInvite, importMemberContrib, openRoom, closeRoom,
-  ensureSync, stopSync, activeRoom, peerCount, syncStatus,
+  initRooms, importRoomInvite, importMemberContrib, applyEnvelope, openRoom, closeRoom,
+  ensureSync, stopSync, activeRoom, peerCount, syncStatus, roomTab,
 } = useRooms()
 
 // Ciclo de sincronización ligado a la sección: solo conectamos al proxy cuando
@@ -211,6 +211,10 @@ function onIdentityClose () {
   pendingShare.value = null
   nickPrompt.value = false
 }
+
+// Disponible para componentes hijos (p. ej. aportar a una sala firma con la
+// identidad y por eso exige apodo, igual que compartir).
+provide('ensureNick', ensureNick)
 
 // Compartir/imprimir un pronóstico AJENO reusa su enlace original (no se firma
 // con tu identidad ni se pide apodo, y no aplica el aviso de incompleto: no es
@@ -702,7 +706,10 @@ async function onHashChange () {
 async function startInbox () {
   const idi = await getIdentity()
   if (!idi?.me?.publickey || inbox) return
-  inbox = new RoomInbox((inv) => { inviteToast.value = inv })
+  inbox = new RoomInbox(
+    (inv) => { inviteToast.value = inv },
+    (env) => { void applyEnvelope(env) },
+  )
   inbox.start()
 }
 
@@ -805,6 +812,13 @@ onUnmounted(() => {
       <span class="room-status" :class="syncStatus">
         {{ syncStatus === 'online' ? t('rooms.live', { n: peerCount }) : t('rooms.offline') }}
       </span>
+      <div class="bar-actions" data-testid="room-bar-actions">
+        <button class="share-i" data-testid="room-bar-share" :title="t('common.share')" @click="roomTab = 'members'">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor" aria-hidden="true">
+            <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z" />
+          </svg>
+        </button>
+      </div>
       <button class="mini" @click="closeRoom">‹ {{ t('rooms.back') }}</button>
     </div>
 

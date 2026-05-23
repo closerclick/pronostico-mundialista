@@ -11,16 +11,23 @@ import { getIdentity } from './identity'
 
 export interface IncomingInvite { url: string; nick?: string }
 
-interface InviteMsg { type?: string; url?: string; nick?: string }
+interface InviteMsg { type?: string; url?: string; nick?: string; env?: string }
 
-/** Escucha invitaciones a salas mientras la app está abierta. */
+/**
+ * Escucha mensajes de salas mientras la app está abierta: invitaciones
+ * (`ROOM_INVITE`) y aportes de pronóstico (`ROOM_PREDICTION`). Al ser GLOBAL
+ * (no atado a la sala abierta), recibe lo que el proxy entregó por la cola
+ * offline al reconectar, aunque no estés mirando esa sala.
+ */
 export class RoomInbox {
   private onInvite: (inv: IncomingInvite) => void
+  private onPrediction?: (env: string) => void
   private off: (() => void) | null = null
   private seen = new Set<string>()
 
-  constructor (onInvite: (inv: IncomingInvite) => void) {
+  constructor (onInvite: (inv: IncomingInvite) => void, onPrediction?: (env: string) => void) {
     this.onInvite = onInvite
+    this.onPrediction = onPrediction
   }
 
   async start () {
@@ -30,6 +37,9 @@ export class RoomInbox {
       if (msg.type === 'ROOM_INVITE' && msg.url && !this.seen.has(msg.url)) {
         this.seen.add(msg.url)
         this.onInvite({ url: msg.url, nick: msg.nick })
+      } else if (msg.type === 'ROOM_PREDICTION' && msg.env) {
+        // Sin dedup por `seen`: un aporte puede actualizarse (last-write-wins).
+        this.onPrediction?.(msg.env)
       }
     })
   }

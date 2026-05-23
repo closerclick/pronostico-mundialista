@@ -11,7 +11,7 @@ import {
   type Room, type RoomMode,
 } from '../lib/roomStore'
 import {
-  genRoomId, TOURNAMENT_START, parseRoomInvite, parseMemberContrib, memberFromFrag,
+  genRoomId, TOURNAMENT_START, parseRoomInvite, parseMemberContrib, memberFromEnvelope,
 } from '../lib/room'
 import { RoomSync } from '../lib/roomSync'
 
@@ -24,6 +24,9 @@ const myPubkey = ref<string | null>(null)
 const myNick = ref<string>('')
 const contacts = ref<PeerInfo[]>([])
 const unreachable = ref(false)
+// Sub-pestaña de la sala activa (compartida para que la barra lateral y el
+// header puedan llevar al usuario a la sección de invitar/compartir).
+const roomTab = ref<'table' | 'compare' | 'members'>('table')
 
 let sync: RoomSync | null = null
 let inited = false
@@ -69,11 +72,23 @@ function ensureSync () {
 // --- Sincronización ---------------------------------------------------------
 function startSync (room: Room) {
   stopSync()
-  const frag = room.members.find((m) => m.publickey === myPubkey.value)?.frag ?? null
-  sync = new RoomSync(room.id, frag, {
-    onPrediction: (f) => receiveMemberFrag(f),
+  const myEnv = room.members.find((m) => m.publickey === myPubkey.value)?.env ?? null
+  sync = new RoomSync(room.id, myEnv, {
+    onPrediction: (env) => applyEnvelope(env),
     onPeerCount: (n) => { peerCount.value = n },
     onStatus: (s) => { syncStatus.value = s },
+    // Miembros conocidos (sin mí): para entrega online + cola offline por pubkey.
+    memberPubkeys: () => {
+      const r = activeRoom.value
+      if (!r) return []
+      return r.members.map((m) => m.publickey).filter((pk) => pk && pk !== myPubkey.value)
+    },
+    // Todos los sobres firmados que conozco, para reenviarlos (gossip).
+    allEnvelopes: () => {
+      const r = activeRoom.value
+      if (!r) return []
+      return r.members.map((m) => m.env).filter((e): e is string => !!e)
+    },
   })
   sync.start()
 }
@@ -84,24 +99,39 @@ function stopSync () {
   syncStatus.value = 'offline'
 }
 
-function updateSyncFrag (frag: string | null) {
-  sync?.updateMyFrag(frag)
+/** Re-difunde mi sobre (aporte o retract) en la sala activa. */
+function updateSyncFrag (env: string | null) {
+  sync?.updateMyEnv(env)
 }
 
-async function receiveMemberFrag (frag: string) {
-  const room = activeRoom.value
+/**
+ * Aplica un sobre firmado recibido a la sala que indica (verificado y por
+ * last-write-wins). Sirve tanto para la sync de la sala activa como para el
+ * buzón GLOBAL (aportes que el proxy entregó por la cola offline al reconectar,
+ * aunque no estés mirando esa sala). Como el sobre va firmado, reenviarlo es
+ * seguro y un retract solo lo aplica quien lo firmó.
+ */
+async function applyEnvelope (env: string) {
+  const parsed = await memberFromEnvelope(env)
+  if (!parsed || !parsed.member.verified) return // identidad obligatoria
+  const room = rooms.value.find((r) => r.id === parsed.roomId)
   if (!room) return
-  const member = await memberFromFrag(frag)
-  if (!member || !member.verified) return // identidad obligatoria
-  if (upsertMember(room, member)) persist()
+  if (upsertMember(room, parsed.member)) persist()
 }
 
 // --- Navegación -------------------------------------------------------------
 function openRoom (id: string) {
   activeRoomId.value = id
   setActiveRoomId(id)
+  roomTab.value = 'table'
   const r = activeRoom.value
   if (r) startSync(r)
+}
+
+/** Abre la sala y la deja en la sub-pestaña de invitar/compartir. */
+function shareRoom (id: string) {
+  openRoom(id)
+  roomTab.value = 'members'
 }
 
 function closeRoom () {
@@ -178,22 +208,22 @@ async function importRoomInvite (frag: string): Promise<string | null> {
 async function importMemberContrib (frag: string): Promise<string | null> {
   const parsed = parseMemberContrib(frag)
   if (!parsed) return null
+  const env = await memberFromEnvelope(parsed.env)
+  if (!env || !env.member.verified) return null
   reloadRooms()
-  const room = rooms.value.find((r) => r.id === parsed.roomId)
+  const room = rooms.value.find((r) => r.id === env.roomId)
   if (!room) return 'NOROOM'
-  const member = await memberFromFrag(parsed.frag)
-  if (!member || !member.verified) return null
-  upsertMember(room, member)
+  upsertMember(room, env.member)
   persist()
-  return parsed.roomId
+  return env.roomId
 }
 
 export function useRooms () {
   return {
-    rooms, activeRoom, activeRoomId, peerCount, syncStatus, myPubkey, myNick, contacts, unreachable,
+    rooms, activeRoom, activeRoomId, peerCount, syncStatus, myPubkey, myNick, contacts, unreachable, roomTab,
     initRooms, reloadRooms, loadIdentityInfo,
-    openRoom, closeRoom, createRoom, joinByLink, leaveRoom, persist,
+    openRoom, shareRoom, closeRoom, createRoom, joinByLink, leaveRoom, persist,
     startSync, stopSync, ensureSync, updateSyncFrag,
-    importRoomInvite, importMemberContrib, getActiveRoomId,
+    importRoomInvite, importMemberContrib, applyEnvelope, getActiveRoomId,
   }
 }

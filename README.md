@@ -118,12 +118,29 @@ o ignorarlos**.
   (debe respetar el tipo exigido por la sala); identidad **obligatoria**, así que
   cada entrada de la tabla tiene **autoría verificable** (se rechazan firmas no
   válidas).
-- **Sincronización híbrida:** en vivo vía **canales del proxy**
-  (`mundial-room-<id>`) cuando hay miembros conectados, y **asíncrona** por
-  enlace de contribución (`#rm=…`) cuando no. Convergen por *last-write-wins*.
+- **Sobre firmado con fecha del autor:** cada aporte viaja como un sobre que el
+  autor **firma con su vault** (`{ sala, frag, ts }`, o `{ sala, retract, ts }`
+  para borrar). El `ts` del autor es la **versión** para *last-write-wins*:
+  re-aportar o borrar le gana a lo anterior.
+- **Sincronización por gossip:** en vivo vía **canales del proxy**
+  (`mundial-room-<id>`), cada peer **reenvía todos los sobres que conoce** (no
+  solo el suyo), así la sala converge aunque no todos estén online a la vez.
+  Reenviar es **seguro**: los sobres van firmados, un peer no puede alterarlos.
   Usa el **cliente estándar del ecosistema** (`@gatoseya/closer-click-proxy-client`,
-  con WebRTC + fallback al proxy), igual que el messenger; la conexión se
-  **identifica con la clave del vault** (`identify`) para enrutar por identidad.
+  WebRTC + fallback al proxy), identificándose con la clave del vault (`identify`).
+- **Los aportes llegan offline:** además del envío en vivo, se difunden por
+  `sendByPubkey` a las pubkeys de los miembros (**cola offline 24 h** del proxy),
+  y un **buzón global** (`RoomInbox`) los aplica a la sala correcta aunque no la
+  tengas abierta al reconectar.
+- **Borrar mi aporte = tombstone firmado:** el autor firma un *retract*; el
+  miembro queda como **lápida** (oculta en la UI) con `ts` mayor, para que un
+  reenvío viejo **no lo reviva**. Solo el autor puede borrar lo suyo (va firmado).
+- **Sello de fecha (sellador):** al compartir/aportar se pide un **sello de
+  tiempo** a `signer.closer.click` (autoridad de tiempo del ecosistema): firma
+  `{ hash, ts }` con SU clave, probando **cuándo** existió el pronóstico sin verlo.
+  El sello viaja dentro del blob firmado; la UI marca cada aporte 🕓 *a tiempo* /
+  ⚠ *tarde o inválido* / — *sin fecha* contra el inicio del torneo. Es
+  best-effort: si el sellador no responde, se comparte igual sin sello.
 - **Privacidad configurable:** la sala puede **sellar** los pronósticos (ocultos
   hasta el primer partido, 11-jun-2026) para evitar copia, o dejarlos visibles.
 - **Simular puntajes:** la barra de Salas tiene acceso a **Resultados** (los
@@ -165,8 +182,9 @@ src/
 │   ├── codec.ts        encode/decode compacto v3 (Lehmer + bits + base64url)
 │   ├── scoring.ts      puntuación de un pronóstico vs resultados oficiales
 │   ├── schedule.ts     fechas/horas UTC de los 104 partidos → hora local
-│   ├── identity.ts     singleton del vault id.closer.click
-│   ├── share.ts        firma ECDSA + blob binario del enlace (punto comprimido)
+│   ├── identity.ts     singleton del vault id.closer.click (+ hook vault de prueba e2e)
+│   ├── signer.ts       cliente del sellador de tiempo (signer.closer.click): sello + verificación
+│   ├── share.ts        firma ECDSA + blob binario del enlace (punto comprimido) + sello de fecha
 │   ├── proxy.ts        resolver token→identidad (challenge firmado por el proxy)
 │   ├── rating.ts       reputación derivada (web-of-trust)
 │   ├── store.ts        librería de pronósticos en localStorage
@@ -174,8 +192,8 @@ src/
 │   ├── roomStore.ts    salas en localStorage (Room/RoomMember, sellado) + espejo nube
 │   ├── room.ts         enlaces de sala firmados (#room=) y de aporte (#rm=)
 │   ├── connection.ts   conexión única al proxy (cliente estándar + identify vault)
-│   ├── roomSync.ts     sincronización en vivo de una sala (canales del proxy)
-│   └── inbox.ts        invitaciones a contactos (sendByPubkey, cola offline 24 h)
+│   ├── roomSync.ts     sync de una sala: gossip de sobres firmados + cola offline
+│   └── inbox.ts        buzón global: invitaciones + aportes (sendByPubkey, cola 24 h)
 ├── composables/
 │   └── useRooms.ts     estado compartido de salas (lista, activa, sync)
 ├── components/

@@ -1,19 +1,24 @@
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
 import QRCode from 'qrcode'
 import { buildShareUrl } from '../lib/share'
 import type { SavedPrediction } from '../lib/store'
 import { decodePrediction } from '../lib/codec'
-import { isMemberSealed, upsertMember, type RoomMode } from '../lib/roomStore'
-import { buildRoomInviteUrl, buildMemberContribUrl, memberFromFrag, modeAllowed } from '../lib/room'
+import { isMemberSealed, upsertMember, type RoomMode, type RoomMember } from '../lib/roomStore'
+import { buildRoomInviteUrl, buildMemberContribUrl, buildMemberEnvelope, buildRetractEnvelope, memberFromEnvelope, modeAllowed, TOURNAMENT_START } from '../lib/room'
 import { sendRoomInvites } from '../lib/inbox'
 import { useRooms } from '../composables/useRooms'
 import { shortKey } from '../lib/rating'
 import RoomLeaderboard from './RoomLeaderboard.vue'
 import RoomCompare from './RoomCompare.vue'
+import SocialShareButtons from './SocialShareButtons.vue'
 
 const { t } = useI18n()
+
+// Exige apodo antes de firmar (provisto por App): aportar a una sala firma con
+// la identidad, igual que compartir, así que requiere tener apodo.
+const ensureNick = inject<(run: () => void) => void>('ensureNick', (run) => run())
 
 const props = defineProps<{
   library: SavedPrediction[]
@@ -21,7 +26,7 @@ const props = defineProps<{
 }>()
 
 const {
-  activeRoom, myPubkey, myNick, contacts, unreachable,
+  activeRoom, myPubkey, myNick, contacts, unreachable, roomTab,
   createRoom, joinByLink, persist, updateSyncFrag,
 } = useRooms()
 
@@ -54,15 +59,27 @@ async function doJoin () {
 }
 
 // --- Detalle de sala --------------------------------------------------------
-type RTab = 'table' | 'compare' | 'members'
-const rtab = ref<RTab>('table')
+// La sub-pestaña activa vive en useRooms (compartida con barra lateral/header).
+const rtab = roomTab
 
 const myPredictions = computed(() => props.library.filter((p) => p.mine && !p.official))
 function entryMode (p: SavedPrediction): string {
   if (p.mode) return p.mode
   try { return decodePrediction(p.code).mode } catch { return 'manual' }
 }
-const myMember = computed(() => activeRoom.value?.members.find((m) => m.publickey === myPubkey.value) ?? null)
+const myMember = computed(() => activeRoom.value?.members.find((m) => m.publickey === myPubkey.value && !m.deleted) ?? null)
+// Miembros visibles (sin lápidas de borrado).
+const liveMembers = computed(() => activeRoom.value?.members.filter((m) => !m.deleted) ?? [])
+
+// Estado del sello de tiempo de un miembro: cuándo existió su pronóstico, según
+// el sellador (signer.closer.click). 'a tiempo' = sellado antes del inicio.
+function sealInfo (m: RoomMember): { cls: string; icon: string; text: string } {
+  const fmt = (ts: number) => new Date(ts).toLocaleString()
+  if (m.sealedAt == null) return { cls: 'none', icon: '—', text: t('rooms.sealNone') }
+  if (!m.sealValid) return { cls: 'bad', icon: '⚠', text: t('rooms.sealInvalid') }
+  if (m.sealedAt < TOURNAMENT_START) return { cls: 'ok', icon: '🕓', text: t('rooms.sealOkAt', { date: fmt(m.sealedAt) }) }
+  return { cls: 'late', icon: '⚠', text: t('rooms.sealLate', { date: fmt(m.sealedAt) }) }
+}
 
 function modeName (m: RoomMode): string {
   if (m === 'free') return t('rooms.modeFree')
@@ -75,27 +92,48 @@ function modeName (m: RoomMode): string {
 const contributing = ref(false)
 const contribError = ref('')
 const contribShared = ref(false)
-async function contribute (entry: SavedPrediction) {
+function contribute (entry: SavedPrediction) {
   const room = activeRoom.value
   if (!room || contributing.value) return
   contribError.value = ''
   if (!modeAllowed(room.mode, entryMode(entry))) { contribError.value = t('rooms.modeMismatch'); return }
+  // Igual que al compartir: exige apodo (abre el perfil si falta) antes de firmar.
+  ensureNick(() => { void doContribute(entry) })
+}
+async function doContribute (entry: SavedPrediction) {
+  const room = activeRoom.value
+  if (!room) return
   contributing.value = true
   try {
     const { url } = await buildShareUrl(entry.code, entry.name)
     const frag = url.split('#')[1] ?? ''
-    const member = await memberFromFrag(frag)
-    if (!member) throw new Error(t('rooms.contribError'))
-    member.nickname = member.nickname || myNick.value || undefined
-    upsertMember(room, member)
+    // Sobre firmado por el autor con ts: ordena versiones (LWW) y habilita borrado.
+    const env = await buildMemberEnvelope(room.id, frag, Date.now())
+    const parsed = await memberFromEnvelope(env)
+    if (!parsed) throw new Error(t('rooms.contribError'))
+    parsed.member.nickname = parsed.member.nickname || myNick.value || undefined
+    upsertMember(room, parsed.member)
     persist()
-    updateSyncFrag(frag)
+    updateSyncFrag(env)
   } catch (e) { contribError.value = e instanceof Error ? e.message : String(e) } finally { contributing.value = false }
+}
+async function removeMyContrib () {
+  const room = activeRoom.value
+  if (!room || !myPubkey.value) return
+  if (!confirm(t('rooms.confirmRemoveContrib'))) return
+  // Tombstone FIRMADO: solo yo puedo borrar lo mío, y al ir firmado con ts mayor
+  // le gana a cualquier reenvío viejo de mi aporte (no se "revive").
+  const env = await buildRetractEnvelope(room.id, Date.now())
+  const parsed = await memberFromEnvelope(env)
+  if (!parsed) return
+  upsertMember(room, parsed.member)
+  persist()
+  updateSyncFrag(env) // difundo la lápida (online + cola offline)
 }
 async function shareMyContrib () {
   const room = activeRoom.value
-  if (!room || !myMember.value) return
-  const url = buildMemberContribUrl(room.id, myMember.value.frag)
+  if (!room || !myMember.value?.env) return
+  const url = buildMemberContribUrl(myMember.value.env)
   if (navigator.share) navigator.share({ url, title: room.name }).catch(() => {})
   else { try { await navigator.clipboard.writeText(url); contribShared.value = true; setTimeout(() => { contribShared.value = false }, 1800) } catch { /* */ } }
 }
@@ -144,9 +182,9 @@ async function inviteSelected () {
   } finally { inviting.value = false }
 }
 
-// Reconstruir invitación y resetear sub-pestaña al cambiar de sala.
+// Reconstruir invitación al cambiar de sala. (La sub-pestaña la fija openRoom /
+// shareRoom en useRooms, así la barra lateral puede abrir directo en "compartir".)
 watch(activeRoom, (r) => {
-  rtab.value = 'table'
   selectedContacts.value = new Set()
   inviteStatus.value = ''
   if (r) buildInvite()
@@ -202,7 +240,10 @@ watch(activeRoom, (r) => {
     </div>
     <div v-else class="mine-note">
       <span>✓ {{ t('rooms.contributed') }}</span>
-      <button class="go ghost mini-share" @click="shareMyContrib">{{ contribShared ? t('rooms.copied') : t('rooms.shareContrib') }}</button>
+      <span class="mine-actions">
+        <button class="go ghost mini-share" @click="shareMyContrib">{{ contribShared ? t('rooms.copied') : t('rooms.shareContrib') }}</button>
+        <button class="go danger mini-share" @click="removeMyContrib">{{ t('rooms.removeContrib') }}</button>
+      </span>
     </div>
 
     <nav class="rtabs">
@@ -223,6 +264,7 @@ watch(activeRoom, (r) => {
           <button class="go ghost" @click="shareInviteNative">{{ t('common.share') }}</button>
         </div>
       </div>
+      <SocialShareButtons v-if="inviteUrl" :url="inviteUrl" :text="activeRoom.name" class="social-row" />
 
       <h4 class="grp-h">{{ t('rooms.inviteContacts') }}</h4>
       <p v-if="!contacts.length" class="empty">{{ t('identity.noContacts') }}</p>
@@ -236,12 +278,13 @@ watch(activeRoom, (r) => {
       </button>
       <p v-if="inviteStatus" class="status">{{ inviteStatus }}</p>
 
-      <h4 class="grp-h">{{ t('rooms.membersList') }} ({{ activeRoom.members.length }})</h4>
-      <p v-if="!activeRoom.members.length" class="empty">{{ t('rooms.noMembers') }}</p>
-      <div v-for="m in activeRoom.members" :key="m.publickey" class="member">
+      <h4 class="grp-h">{{ t('rooms.membersList') }} ({{ liveMembers.length }})</h4>
+      <p v-if="!liveMembers.length" class="empty">{{ t('rooms.noMembers') }}</p>
+      <div v-for="m in liveMembers" :key="m.publickey" class="member">
         <span class="badge" :class="{ ok: m.verified }">{{ m.verified ? '✓' : '⚠' }}</span>
         <span class="c-nm">{{ m.nickname || t('common.anonymous') }}<span v-if="m.publickey === myPubkey" class="you">{{ t('rooms.you') }}</span></span>
         <span v-if="isMemberSealed(activeRoom, m, myPubkey)" class="tag gold">🔒</span>
+        <span class="seal" :class="sealInfo(m).cls" :title="sealInfo(m).text">{{ sealInfo(m).icon }}</span>
         <span class="mono">{{ shortKey(m.publickey) }}</span>
       </div>
     </template>
@@ -275,8 +318,10 @@ input, .sel { width: 100%; background: var(--bg); border: 1px solid var(--line);
 .mine-note { font-size: 0.85rem; color: var(--green); margin-bottom: 0.9rem; display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
 .go { background: var(--azure); color: #042038; border: none; border-radius: 8px; padding: 0.45rem 0.9rem; font-weight: 800; cursor: pointer; white-space: nowrap; font-family: inherit; }
 .go.ghost { background: transparent; color: var(--azure); border: 1px solid var(--azure); }
+.go.danger { background: transparent; color: #ff6b6b; border: 1px solid #ff6b6b; }
 .go:disabled { opacity: 0.5; cursor: default; }
 .mini-share { padding: 0.35rem 0.7rem; font-size: 0.78rem; }
+.mine-actions { display: inline-flex; gap: 0.4rem; }
 .rtabs { display: flex; gap: 0.4rem; margin-bottom: 1rem; max-width: 420px; }
 .rtabs button { flex: 1; background: transparent; border: 1px solid var(--line); color: var(--muted); padding: 0.55rem; border-radius: 8px; cursor: pointer; font-weight: 700; font-size: 0.85rem; }
 .rtabs button.on { background: var(--panel-2); color: var(--text); border-color: var(--azure); }
@@ -285,6 +330,7 @@ input, .sel { width: 100%; background: var(--bg); border: 1px solid var(--line);
 .qr { width: 130px; height: 130px; border-radius: 8px; background: #fff; padding: 4px; }
 .invite-actions { display: flex; flex-direction: column; gap: 0.5rem; }
 .invite-actions .go { padding: 0.55rem 1.1rem; }
+.social-row { margin: 0.7rem 0 0.2rem; justify-content: flex-start; }
 .contact, .member { display: flex; align-items: center; gap: 0.5rem; padding: 0.45rem 0; border-top: 1px solid var(--line-soft); max-width: 480px; }
 .contact { cursor: pointer; }
 .c-nm { flex: 1; min-width: 0; font-weight: 700; font-size: 0.86rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -292,5 +338,9 @@ input, .sel { width: 100%; background: var(--bg); border: 1px solid var(--line);
 .mono { font-family: monospace; font-size: 0.66rem; color: var(--muted); }
 .badge { font-size: 0.75rem; color: #e0a; }
 .badge.ok { color: var(--green); }
+.seal { font-size: 0.78rem; cursor: help; flex-shrink: 0; }
+.seal.ok { color: var(--green); }
+.seal.late, .seal.bad { color: var(--gold); }
+.seal.none { color: var(--muted); }
 .tag.gold { color: var(--gold); border: 1px solid var(--gold); border-radius: 5px; padding: 0.05rem 0.35rem; font-size: 0.66rem; }
 </style>

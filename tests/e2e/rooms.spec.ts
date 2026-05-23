@@ -1,135 +1,174 @@
-import { test, expect, chromium } from '@playwright/test'
+import { test, expect, type BrowserContext, type Page } from '@playwright/test'
+import fs from 'node:fs'
+import path from 'node:path'
 
-// Salas: round-trip de los enlaces (invitación + contribución) y, lo más
-// importante, la SINCRONIZACIÓN EN VIVO entre DOS navegadores contra el proxy
-// real del ecosistema (canales firmados). Como firmar requiere el vault de
-// identidad (no fiable headless), inyectamos un "vault de prueba" con una clave
-// ECDSA P-256 generada en el navegador (mismo canonicalStringify que el proxy).
+// Salas e2e contra el PROXY REAL del ecosistema:
+//   A) round-trip del enlace de sala (sobre de aporte firmado + retract).
+//   B) DOS navegadores: aportar → sync por gossip → BORRAR (tombstone firmado),
+//      manejando la UI real y verificando lo que ve cada uno. Deja screenshots.
+//
+// Firmar requiere el vault de identidad (no fiable headless), así que inyectamos
+// un VAULT DE PRUEBA: una clave ECDSA P-256 generada en el navegador, expuesta en
+// `window.__TEST_VAULT_PROMISE__` (hook que `lib/identity.ts` usa solo en tests).
 
 const BASE = process.env.E2E_BASE || 'https://localhost:5180'
+const SHOT_DIR = path.resolve('test-results/rooms-2browser')
 
-test('los enlaces de sala (invitación y contribución) hacen round-trip', async ({ page }) => {
+// Vault de prueba: replica el contrato del vault real (signData + me.publickey)
+// con el MISMO formato de pubkey que reconstruye parseShareFragment/verifyBlob.
+const vaultInit = (nick: string) => `
+window.__TEST_VAULT_PROMISE__ = (async () => {
+  const kp = await crypto.subtle.generateKey({ name:'ECDSA', namedCurve:'P-256' }, true, ['sign','verify']);
+  const j = await crypto.subtle.exportKey('jwk', kp.publicKey);
+  const pub = JSON.stringify({ kty:'EC', crv:'P-256', x:j.x, y:j.y, ext:true });
+  const canon = (v) => (v===null||typeof v!=='object') ? JSON.stringify(v)
+    : Array.isArray(v) ? '['+v.map(canon).join(',')+']'
+    : '{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canon(v[k])).join(',')+'}';
+  let nickname = ${JSON.stringify(nick)};
+  return {
+    me: { publickey: pub, nickname },
+    async signData(data){
+      const sig = new Uint8Array(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'}, kp.privateKey, new TextEncoder().encode(canon(data))));
+      let s=''; for(const b of sig) s+=String.fromCharCode(b);
+      return { signature: btoa(s), publickey: pub };
+    },
+    async listContacts(){ return []; },
+    async setMyNickname(a){ nickname = (a && a.nickname) || nickname; this.me.nickname = nickname; },
+  };
+})();`
+
+async function installVault (context: BrowserContext, nick: string) {
+  await context.addInitScript(vaultInit(nick))
+}
+
+// Siembra una sala compartida + un pronóstico propio en localStorage (evita el
+// baile de crear/unirse por UI) y deja la sala activa.
+async function seed (page: Page, roomId: string, nick: string) {
+  await page.evaluate(async ({ roomId, nick }) => {
+    const { defaultPrediction } = await import('/src/lib/prediction.ts')
+    const { encodePrediction } = await import('/src/lib/codec.ts')
+    const now = Date.now()
+    const pred = { id: 'p1', name: 'Pronóstico de ' + nick, code: encodePrediction(defaultPrediction()), mine: true, official: false, updatedAt: now }
+    localStorage.setItem('mundial.library.v1', JSON.stringify([pred]))
+    const room = { id: roomId, name: 'Sala demo', mode: 'free', sealedUntil: 0, hostPubkey: '', hostNick: '', mine: false, createdAt: now, updatedAt: now, members: [] }
+    localStorage.setItem('mundial.rooms.v1', JSON.stringify([room]))
+    localStorage.setItem('mundial.activeRoomId.v1', roomId)
+  }, { roomId, nick })
+}
+
+async function openRoomsSection (page: Page) {
+  await page.click('[data-testid="sb-tab-rooms"]')
+  await page.waitForSelector('.rtabs', { timeout: 15000 })
+}
+async function membersTab (page: Page) {
+  await page.click('.rtabs button:nth-child(3)')
+  await page.waitForTimeout(400)
+}
+async function contribute (page: Page) {
+  page.on('dialog', (d) => d.accept())
+  await page.click('.contribute .pick button.go')
+  await page.waitForSelector('.mine-note', { timeout: 20000 })
+}
+
+test('round-trip de enlaces de sala: sobre de aporte firmado + retract', async ({ page, context }) => {
+  test.setTimeout(40000)
+  await installVault(context, 'Tester')
   await page.goto(BASE + '/')
 
   const r = await page.evaluate(async () => {
     const room = await import('/src/lib/room.ts')
     const share = await import('/src/lib/share.ts')
+    const codec = await import('/src/lib/codec.ts')
+    const pred = await import('/src/lib/prediction.ts')
 
-    // Firmamos el descriptor con una clave de prueba, replicando signBlob.
-    const subtle = globalThis.crypto.subtle
-    const kp = await subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify'])
-    const jwk = await subtle.exportKey('jwk', kp.privateKey) as JsonWebKey
-    const b64urlToBytes = (s: string): Uint8Array => {
-      const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/'))
-      const o = new Uint8Array(bin.length)
-      for (let i = 0; i < bin.length; i++) o[i] = bin.charCodeAt(i)
-      return o
-    }
-    const b64url = (bytes: Uint8Array): string => {
-      let s = ''
-      for (const b of bytes) s += String.fromCharCode(b)
-      return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-    }
-    const desc = JSON.stringify({ i: 'room-123', n: 'Sala de prueba', m: 'score', s: 0, c: 1700000000000 })
-    const sig = new Uint8Array(await subtle.sign(
-      { name: 'ECDSA', hash: 'SHA-256' }, kp.privateKey,
-      new TextEncoder().encode(JSON.stringify(desc)),
-    ))
-    const x = b64urlToBytes(jwk.x as string)
-    const y = b64urlToBytes(jwk.y as string)
-    const prefix = (y[31]! & 1) === 1 ? 0x03 : 0x02
-    const db = new TextEncoder().encode(desc)
-    const parts = [
-      Uint8Array.of(2), sig, Uint8Array.of(prefix), x,
-      Uint8Array.of((db.length >> 8) & 255, db.length & 255), db,
-    ]
-    const total = parts.reduce((s, p) => s + p.length, 0)
-    const blob = new Uint8Array(total)
-    let off = 0
-    for (const p of parts) { blob.set(p, off); off += p.length }
-    const inviteFrag = 'room=' + b64url(blob)
+    // Pronóstico firmado (con el vault de prueba) → frag → sobre de aporte.
+    const code = codec.encodePrediction(pred.defaultPrediction())
+    const { url } = await share.buildShareUrl(code, 'X')
+    const frag = url.split('#')[1] as string
+    const env = await room.buildMemberEnvelope('room-abc', frag, Date.now())
+    const link = room.buildMemberContribUrl(env)
+    const linkFrag = link.slice(link.indexOf('#') + 1)
 
-    const invite = await room.parseRoomInvite(inviteFrag)
+    const parsed = room.parseMemberContrib(linkFrag)
+    const m = parsed ? await room.memberFromEnvelope(parsed.env) : null
 
-    // Contribución: un fragmento de pronóstico cualquiera, asociado a la sala.
-    const contribUrl = room.buildMemberContribUrl('room-123', 'FRAGFIRMADO__')
-    const contribFrag = contribUrl.slice(contribUrl.indexOf('#') + 1)
-    const contrib = room.parseMemberContrib(contribFrag)
+    // Retract (tombstone) firmado.
+    const renv = await room.buildRetractEnvelope('room-abc', Date.now())
+    const rm = await room.memberFromEnvelope(renv)
 
     return {
-      kindInvite: room.fragKind(inviteFrag),
-      kindMember: room.fragKind(contribFrag),
-      inviteId: invite?.id,
-      inviteName: invite?.name,
-      inviteMode: invite?.mode,
-      inviteVerified: invite?.verified,
-      contribRoomId: contrib?.roomId,
-      contribFragInner: contrib?.frag,
-      hasShareBase: typeof share.SHARE_BASE === 'string',
+      kindMember: room.fragKind(linkFrag),
+      contribRoomId: m?.roomId,
+      contribVerified: m?.member.verified,
+      contribDeleted: !!m?.member.deleted,
+      contribHasCode: !!m?.member.code,
+      retractRoomId: rm?.roomId,
+      retractDeleted: !!rm?.member.deleted,
+      retractVerified: rm?.member.verified,
     }
   })
 
-  expect(r.kindInvite).toBe('room')
   expect(r.kindMember).toBe('member')
-  expect(r.inviteId).toBe('room-123')
-  expect(r.inviteName).toBe('Sala de prueba')
-  expect(r.inviteMode).toBe('score')
-  expect(r.inviteVerified).toBe(true)
-  expect(r.contribRoomId).toBe('room-123')
-  expect(r.contribFragInner).toBe('FRAGFIRMADO__')
-  expect(r.hasShareBase).toBe(true)
+  expect(r.contribRoomId).toBe('room-abc')
+  expect(r.contribVerified).toBe(true)
+  expect(r.contribDeleted).toBe(false)
+  expect(r.contribHasCode).toBe(true)
+  expect(r.retractRoomId).toBe('room-abc')
+  expect(r.retractDeleted).toBe(true)
+  expect(r.retractVerified).toBe(true)
 })
 
-test('dos navegadores sincronizan un pronóstico en una sala vía el proxy', async () => {
-  test.setTimeout(60000)
+test('dos navegadores: aportar → sync por gossip → borrar (tombstone firmado)', async ({ browser }, testInfo) => {
+  test.setTimeout(90000)
+  fs.mkdirSync(SHOT_DIR, { recursive: true })
+  const roomId = 'e2e-' + Math.random().toString(36).slice(2, 8)
 
-  // Script que corre en cada navegador: arma un RoomSync (sobre el cliente
-  // estándar del ecosistema) y difunde su frag; debe recibir el del otro peer.
-  // El canal del proxy lo firma el propio proxy-client (clave de transporte),
-  // así que no hace falta inyectar identidad para este intercambio.
-  const driver = async (args: { roomId: string; myFrag: string; waitForFrag: string }) => {
-    const { roomId, myFrag, waitForFrag } = args
-    const { RoomSync } = await import('/src/lib/roomSync.ts')
-    return await new Promise<{ received: boolean }>((resolve) => {
-      let done = false
-      const sync = new RoomSync(roomId, myFrag, {
-        onPrediction: (frag: string) => {
-          if (frag === waitForFrag && !done) {
-            done = true
-            try { sync.stop() } catch { /* */ }
-            resolve({ received: true })
-          }
-        },
-      })
-      sync.start()
-      setTimeout(() => { if (!done) { try { sync.stop() } catch { /* */ } resolve({ received: false }) } }, 25000)
-    })
+  const ctxA = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1100, height: 820 } })
+  const ctxB = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1100, height: 820 } })
+  await installVault(ctxA, 'Ana')
+  await installVault(ctxB, 'Beto')
+  const A = await ctxA.newPage()
+  const B = await ctxB.newPage()
+
+  const shot = async (page: Page, name: string) => {
+    const file = path.join(SHOT_DIR, name + '.png')
+    await page.screenshot({ path: file, fullPage: true })
+    await testInfo.attach(name, { path: file, contentType: 'image/png' })
   }
 
-  const roomId = 'e2e-' + Math.random().toString(36).slice(2, 10)
-  const fragA = 'PREDICCION_A_' + roomId
-  const fragB = 'PREDICCION_B_' + roomId
-
-  const browserA = await chromium.launch()
-  const browserB = await chromium.launch()
   try {
-    const pageA = await (await browserA.newContext({ ignoreHTTPSErrors: true })).newPage()
-    const pageB = await (await browserB.newContext({ ignoreHTTPSErrors: true })).newPage()
-    await pageA.goto(BASE + '/')
-    await pageB.goto(BASE + '/')
+    await A.goto(BASE + '/'); await seed(A, roomId, 'Ana'); await A.reload()
+    await B.goto(BASE + '/'); await seed(B, roomId, 'Beto'); await B.reload()
 
-    // Ambos arrancan a la vez; cada uno espera el frag del otro.
-    const [resA, resB] = await Promise.all([
-      pageA.evaluate(driver, { roomId, myFrag: fragA, waitForFrag: fragB })
-        .catch(() => ({ received: false })),
-      pageB.evaluate(driver, { roomId, myFrag: fragB, waitForFrag: fragA })
-        .catch(() => ({ received: false })),
-    ])
+    await openRoomsSection(A)
+    await openRoomsSection(B)
+    await A.waitForTimeout(5000) // conectar al proxy + descubrir peers
 
-    expect(resA.received, 'A recibió el pronóstico de B').toBe(true)
-    expect(resB.received, 'B recibió el pronóstico de A').toBe(true)
+    await contribute(A)
+    await contribute(B)
+    await A.waitForTimeout(3500) // gossip
+
+    await membersTab(A); await membersTab(B)
+    await shot(A, '1-ana-tras-aportar')
+    await shot(B, '2-beto-ve-a-ana')
+
+    // Cada navegador debe ver a AMBOS miembros (la sala convergió por el proxy).
+    await expect(B.locator('.member')).toHaveCount(2)
+    await expect(A.locator('.member')).toHaveCount(2)
+
+    // Ana borra su aporte → tombstone firmado que se propaga.
+    await A.click('.mine-actions button.danger')
+    await A.waitForTimeout(4000)
+    await membersTab(B)
+    await shot(A, '3-ana-tras-borrar')
+    await shot(B, '4-beto-ya-no-ve-a-ana')
+
+    // En Beto queda SOLO Beto (la lápida ocultó a Ana). En Ana vuelve a aparecer
+    // el panel de "Contribuir".
+    await expect(B.locator('.member')).toHaveCount(1)
+    await expect(A.locator('.contribute')).toBeVisible()
   } finally {
-    await browserA.close()
-    await browserB.close()
+    await ctxA.close()
+    await ctxB.close()
   }
 })

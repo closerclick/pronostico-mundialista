@@ -26,7 +26,7 @@ function asEntry (m: RoomMember): SavedPrediction {
 interface Row { member: RoomMember; sealed: boolean; total: number; isMe: boolean }
 
 const rows = computed<Row[]>(() => {
-  const out: Row[] = props.room.members.map((m) => {
+  const out: Row[] = props.room.members.filter((m) => !m.deleted).map((m) => {
     const sealed = isMemberSealed(props.room, m, props.myPubkey)
     const total = sealed ? -1 : scoreEntry(asEntry(m), props.official).total
     return { member: m, sealed, total, isMe: m.publickey === props.myPubkey }
@@ -47,7 +47,7 @@ const sealedDate = computed(() => new Date(props.room.sealedUntil).toLocaleStrin
   <div class="lb">
     <p v-if="!hasOfficial" class="note">{{ t('rooms.noOfficial') }}</p>
     <p v-if="sealedActive" class="note sealed">🔒 {{ t('rooms.sealedUntil', { date: sealedDate }) }}</p>
-    <p v-if="!room.members.length" class="empty">{{ t('rooms.noMembers') }}</p>
+    <p v-if="!rows.length" class="empty">{{ t('rooms.noMembers') }}</p>
 
     <table v-else class="tbl">
       <thead>

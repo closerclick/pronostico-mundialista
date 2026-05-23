@@ -47,7 +47,7 @@ const official = computed(() => {
 })
 
 const cols = computed<MemberCol[]>(() =>
-  props.room.members.map((m) => {
+  props.room.members.filter((m) => !m.deleted).map((m) => {
     const sealed = isMemberSealed(props.room, m, props.myPubkey)
     const p = sealed ? null : decode(m.code)
     const rm = p ? resolveMatches(p).get(FINAL.num) : undefined
@@ -76,7 +76,7 @@ function isCorrect (officialId: number | null | undefined, id: number | null): b
       <button :class="{ on: dim === 'groups' }" @click="dim = 'groups'">{{ t('rooms.dimGroups') }}</button>
     </div>
 
-    <p v-if="!room.members.length" class="empty">{{ t('rooms.noMembers') }}</p>
+    <p v-if="!cols.length" class="empty">{{ t('rooms.noMembers') }}</p>
 
     <div v-else class="scroll">
       <table class="tbl">

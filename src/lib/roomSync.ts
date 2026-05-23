@@ -14,25 +14,32 @@ import { ensureConnected, getProxyClient } from './connection'
 const CHANNEL_PREFIX = 'mundial-room-'
 
 export interface RoomSyncHandlers {
-  onPrediction: (frag: string) => void
+  onPrediction: (env: string) => void
   onPeerCount?: (n: number) => void
   onStatus?: (s: 'connecting' | 'online' | 'offline') => void
+  /** Pubkeys de los miembros conocidos de la sala (sin la mía), para entrega
+   *  por identidad estable: online inmediato + cola offline 24h del proxy. */
+  memberPubkeys?: () => string[]
+  /** Todos los sobres firmados que conozco (de todos los miembros, incluidas
+   *  lápidas), para REENVIARLOS a otros peers (gossip): así la sala converge sin
+   *  que cada autor esté online. Reenviar es seguro: van firmados, no se alteran. */
+  allEnvelopes?: () => string[]
 }
 
-interface RoomMsg { type?: string; roomId?: string; frag?: string }
+interface RoomMsg { type?: string; roomId?: string; env?: string }
 
 /** Mantiene viva la sincronización de UNA sala mientras está en pantalla. */
 export class RoomSync {
   private roomId: string
-  private myFrag: string | null
+  private myEnv: string | null
   private handlers: RoomSyncHandlers
   private peers = new Set<string>()
   private offFns: Array<() => void> = []
   private stopped = false
 
-  constructor (roomId: string, myFrag: string | null, handlers: RoomSyncHandlers) {
+  constructor (roomId: string, myEnv: string | null, handlers: RoomSyncHandlers) {
     this.roomId = roomId
-    this.myFrag = myFrag
+    this.myEnv = myEnv
     this.handlers = handlers
   }
 
@@ -51,7 +58,8 @@ export class RoomSync {
       this.handlers.onStatus?.('online')
       this.emitCount()
       const list = [...this.peers]
-      this.broadcastPrediction(list)
+      this.relayAll(list)        // les paso TODO lo que conozco (gossip)
+      this.broadcastByPubkey()   // encolo lo MÍO para los miembros offline (24h)
       this.requestPredictions(list)
     } catch (e) {
       console.warn('No se pudo publicar/listar el canal de la sala:', e)
@@ -69,10 +77,11 @@ export class RoomSync {
     this.handlers.onStatus?.('offline')
   }
 
-  /** Re-difunde mi pronóstico (al aportarlo o cambiarlo). */
-  updateMyFrag (frag: string | null) {
-    this.myFrag = frag
-    this.broadcastPrediction([...this.peers])
+  /** Re-difunde MI sobre (al aportar, cambiar o BORRAR). */
+  updateMyEnv (env: string | null) {
+    this.myEnv = env
+    this.broadcastMine([...this.peers]) // online ahora (entrega inmediata)
+    this.broadcastByPubkey()            // miembros offline: queda encolado 24h
   }
 
   private emitCount () { this.handlers.onPeerCount?.(this.peers.size + 1) }
@@ -81,9 +90,26 @@ export class RoomSync {
     if (!tokens.length) return
     getProxyClient().send(tokens, msg)
   }
-  private broadcastPrediction (tokens: string[]) {
-    if (!this.myFrag) return
-    this.send(tokens, { type: 'ROOM_PREDICTION', roomId: this.roomId, frag: this.myFrag })
+  private sendEnv (tokens: string[], env: string) {
+    this.send(tokens, { type: 'ROOM_PREDICTION', roomId: this.roomId, env })
+  }
+  private broadcastMine (tokens: string[]) {
+    if (this.myEnv) this.sendEnv(tokens, this.myEnv)
+  }
+  // Reenvía TODOS los sobres que conozco (gossip): online inmediato a esos tokens.
+  private relayAll (tokens: string[]) {
+    if (!tokens.length) return
+    const envs = this.handlers.allEnvelopes?.() ?? []
+    for (const env of envs) if (env) this.sendEnv(tokens, env)
+    if (this.myEnv && !envs.includes(this.myEnv)) this.sendEnv(tokens, this.myEnv)
+  }
+  // Difunde MI sobre por la IDENTIDAD de los miembros (no por token): el proxy lo
+  // entrega online y lo encola hasta 24h para los que estén offline.
+  private broadcastByPubkey () {
+    if (!this.myEnv) return
+    const pks = (this.handlers.memberPubkeys?.() ?? []).filter(Boolean)
+    if (!pks.length) return
+    try { getProxyClient().sendByPubkey(pks, { type: 'ROOM_PREDICTION', roomId: this.roomId, env: this.myEnv }) } catch { /* */ }
   }
   private requestPredictions (tokens: string[]) {
     this.send(tokens, { type: 'ROOM_REQUEST', roomId: this.roomId })
@@ -93,17 +119,17 @@ export class RoomSync {
     this.offFns.push(c.on('message', (from: string, payload: unknown) => {
       const msg = (typeof payload === 'object' && payload ? payload : {}) as RoomMsg
       if (msg.roomId !== this.roomId) return
-      if (msg.type === 'ROOM_PREDICTION' && typeof msg.frag === 'string') {
-        this.handlers.onPrediction(msg.frag)
+      if (msg.type === 'ROOM_PREDICTION' && typeof msg.env === 'string') {
+        this.handlers.onPrediction(msg.env)
       } else if (msg.type === 'ROOM_REQUEST' && from) {
-        this.broadcastPrediction([from])
+        this.relayAll([from]) // le paso TODO lo que conozco, no solo lo mío
       }
     }))
     this.offFns.push(c.on('channel_joined', (channel: string, token: string) => {
       if (channel !== this.channelName || token === c.token) return
       this.peers.add(token)
       this.emitCount()
-      this.broadcastPrediction([token])
+      this.relayAll([token])
       this.requestPredictions([token])
     }))
     const drop = (channel: string, token: string) => {

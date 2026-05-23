@@ -13,14 +13,23 @@
 //   [+]      apodo: 1 byte de longitud + UTF-8
 //   [+]      nombre: 1 byte de longitud + UTF-8 (máx 50 caracteres)
 // Los enlaces viejos (JSON) se siguen leyendo por compatibilidad.
+//
+// Versión 2: idéntica a la 1 y, al final, un SELLO DE TIEMPO del sellador
+// (signer.closer.click) que garantiza CUÁNDO existió el pronóstico:
+//   [+]      ts: 6 bytes big-endian (ms epoch, reloj del sellador)
+//   [+]      firma del sellador: 64 bytes (ECDSA P-256 r‖s)
+// El sello se firma sobre el hash SHA-256 de (code ‖ X ‖ Y), atándolo al
+// contenido y al autor. Se verifica contra la pubkey pineada del sellador.
 
 import { getIdentity } from './identity'
+import { requestSeal, verifySeal, sha256Base64url } from './signer'
 
 export { getIdentity }
 
 export const SHARE_BASE = 'https://mundial.closer.click/'
 
 const PAYLOAD_VERSION = 1
+const PAYLOAD_VERSION_SEALED = 2
 
 // ---- base64 / base64url ----------------------------------------------------
 
@@ -92,6 +101,25 @@ export function concatBytes (parts: Uint8Array[]): Uint8Array {
   return out
 }
 
+// ts (ms epoch) en 6 bytes big-endian: alcanza hasta el año ~10889.
+function ts6ToBytes (ts: number): Uint8Array {
+  const out = new Uint8Array(6)
+  let n = Math.floor(ts)
+  for (let i = 5; i >= 0; i--) { out[i] = n & 0xff; n = Math.floor(n / 256) }
+  return out
+}
+function bytesToTs6 (b: Uint8Array): number {
+  let n = 0
+  for (let i = 0; i < 6; i++) n = n * 256 + b[i]!
+  return n
+}
+
+// Hash que sella el sellador: ata el sello al CONTENIDO (code) y al AUTOR (X,Y
+// del punto público). Bytes idénticos al firmar y al verificar.
+function predictionSealHash (codeBytes: Uint8Array, xBytes: Uint8Array, yBytes: Uint8Array): Promise<string> {
+  return sha256Base64url(concatBytes([codeBytes, xBytes, yBytes]))
+}
+
 /**
  * Firma el código del pronóstico y arma el enlace compartible (blob binario).
  * Lanza si no hay identidad disponible.
@@ -113,8 +141,13 @@ export async function buildShareUrl (code: string, name?: string): Promise<{ url
   const nickB = nickname ? enc.encode(nickname).slice(0, 255) : new Uint8Array(0)
   const nameB = name ? enc.encode(name.trim().slice(0, 50)).slice(0, 255) : new Uint8Array(0)
 
-  const blob = concatBytes([
-    Uint8Array.of(PAYLOAD_VERSION),
+  // Sello de tiempo del sellador (best-effort): si no responde, se comparte sin
+  // sello (= sin fecha verificable). El sellador pone la fecha, no nosotros.
+  const sealHash = await predictionSealHash(codeBytes, xBytes, yBytes)
+  const seal = await requestSeal(sealHash)
+
+  const head = [
+    Uint8Array.of(seal ? PAYLOAD_VERSION_SEALED : PAYLOAD_VERSION),
     sig,
     Uint8Array.of(prefix),
     xBytes,
@@ -122,7 +155,9 @@ export async function buildShareUrl (code: string, name?: string): Promise<{ url
     codeBytes,
     Uint8Array.of(nickB.length), nickB,
     Uint8Array.of(nameB.length), nameB,
-  ])
+  ]
+  if (seal) head.push(ts6ToBytes(seal.ts), seal.sig)
+  const blob = concatBytes(head)
 
   return { url: `${SHARE_BASE}#${bytesToB64url(blob)}`, publickey, nickname }
 }
@@ -135,9 +170,23 @@ export interface IncomingPrediction {
   name?: string
   /** clave pública JWK (string) reconstruida, identifica al autor */
   publickey: string
+  /** instante del sello de tiempo (ms epoch), si el enlace trae sello */
+  sealedAt?: number
+  /** ¿el sello del sellador es válido (firma correcta contra la pubkey pineada)? */
+  sealValid?: boolean
 }
 
-async function verifyAndBuild (code: string, sig: Uint8Array, jwk: { kty: string; crv: string; x: string; y: string; ext: boolean }, nickname?: string, name?: string): Promise<IncomingPrediction> {
+/** Sello crudo extraído del blob (antes de verificar). */
+interface RawSeal { ts: number; sig: Uint8Array; hash: string }
+
+async function verifyAndBuild (
+  code: string,
+  sig: Uint8Array,
+  jwk: { kty: string; crv: string; x: string; y: string; ext: boolean },
+  nickname?: string,
+  name?: string,
+  rawSeal?: RawSeal | null,
+): Promise<IncomingPrediction> {
   let verified = false
   try {
     const key = await crypto.subtle.importKey('jwk', jwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify'])
@@ -146,7 +195,12 @@ async function verifyAndBuild (code: string, sig: Uint8Array, jwk: { kty: string
       sig as BufferSource, canonicalBytes(code) as BufferSource,
     )
   } catch (e) { console.warn('Verificación de firma falló:', e) }
-  return { code, verified, nickname, name, publickey: JSON.stringify(jwk) }
+  const out: IncomingPrediction = { code, verified, nickname, name, publickey: JSON.stringify(jwk) }
+  if (rawSeal) {
+    out.sealedAt = rawSeal.ts
+    out.sealValid = await verifySeal(rawSeal.hash, rawSeal.ts, rawSeal.sig)
+  }
+  return out
 }
 
 /** Lee y verifica un pronóstico desde el fragmento del enlace (sin el #). */
@@ -158,8 +212,9 @@ export async function parseShareFragment (frag: string): Promise<IncomingPredict
   // Formato viejo (JSON): el primer byte es '{' (0x7B).
   if (bytes[0] === 0x7b) return parseJsonLegacy(bytes)
 
-  // Formato binario (versión 1).
-  if (bytes[0] !== PAYLOAD_VERSION) return null
+  // Formato binario (versión 1 sin sello, versión 2 con sello de tiempo).
+  const version = bytes[0]
+  if (version !== PAYLOAD_VERSION && version !== PAYLOAD_VERSION_SEALED) return null
   try {
     let pos = 1
     const sig = bytes.slice(pos, pos + 64); pos += 64
@@ -170,11 +225,20 @@ export async function parseShareFragment (frag: string): Promise<IncomingPredict
     const nickLen = bytes[pos]!; pos += 1
     const nick = nickLen ? new TextDecoder().decode(bytes.slice(pos, pos + nickLen)) : undefined; pos += nickLen
     const nameLen = bytes[pos]!; pos += 1
-    const name = nameLen ? new TextDecoder().decode(bytes.slice(pos, pos + nameLen)) : undefined
+    const name = nameLen ? new TextDecoder().decode(bytes.slice(pos, pos + nameLen)) : undefined; pos += nameLen
 
     const yBytes = decompressY(xBytes, prefix === 0x03)
+
+    let rawSeal: RawSeal | null = null
+    if (version === PAYLOAD_VERSION_SEALED && bytes.length >= pos + 6 + 64) {
+      const ts = bytesToTs6(bytes.slice(pos, pos + 6)); pos += 6
+      const sealSig = bytes.slice(pos, pos + 64); pos += 64
+      const hash = await predictionSealHash(codeBytes, xBytes, yBytes)
+      rawSeal = { ts, sig: sealSig, hash }
+    }
+
     const jwk = { kty: 'EC', crv: 'P-256', x: bytesToB64url(xBytes), y: bytesToB64url(yBytes), ext: true }
-    return verifyAndBuild(bytesToB64url(codeBytes), sig, jwk, nick, name)
+    return verifyAndBuild(bytesToB64url(codeBytes), sig, jwk, nick, name, rawSeal)
   } catch { return null }
 }
 
