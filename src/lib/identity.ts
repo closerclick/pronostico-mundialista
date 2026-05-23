@@ -10,6 +10,11 @@ let _idPromise: Promise<IdentityInstance | null> | null = null
 
 /** Conecta (una sola vez) al vault de identidad. Devuelve null si no alcanza. */
 export function getIdentity (): Promise<IdentityInstance | null> {
+  // Hook SOLO para tests e2e: si la página inyectó un vault de prueba (clave
+  // generada en el navegador), lo usamos en vez del iframe real id.closer.click.
+  // En producción este flag nunca está seteado.
+  const testVault = (globalThis as { __TEST_VAULT_PROMISE__?: Promise<IdentityInstance | null> }).__TEST_VAULT_PROMISE__
+  if (testVault) { _idPromise = testVault; return _idPromise }
   if (!_idPromise) {
     _idPromise = Identity.connect()
       .then((id) => id)

@@ -101,6 +101,66 @@ o ignorarlos**.
 - **Imprimir** y **Descargar PDF** en una hoja **A4** (plantilla distinta por
   modo) con el QR firmado, vía `html2canvas` + `jspdf`.
 
+### Salas (compartir, comparar y competir)
+- **Salas** es la otra "página" del app (conmutador **Pronósticos / Salas** en la
+  barra lateral): reúne los pronósticos firmados de varias personas para
+  **comparar** y llevar una **tabla de posiciones** vs. los resultados oficiales.
+- 100% del lado del cliente: cada quien guarda en su `localStorage`
+  (`mundial.rooms.v1`) las salas en las que está. **Sin servidor autoritativo**;
+  el proxy y los enlaces solo reparten/sincronizan (filosofía CloserClick).
+- **Crear / unirse** desde la barra lateral (igual que los pronósticos): la sala
+  se selecciona ahí y el contenido se ve como página, **sin modales**. La barra
+  superior muestra **en qué sala estás** y el estado de sincronización.
+- **Invitar** de dos formas (híbrido): por **enlace/QR** firmado
+  (`#room=<blob>`) o eligiendo **contactos** del vault (se les envía por
+  `sendByPubkey`, con **cola offline del proxy hasta 24 h**: les llega aunque no
+  estén online, al abrir la app). Cada miembro **aporta** uno de sus pronósticos
+  (debe respetar el tipo exigido por la sala); identidad **obligatoria**, así que
+  cada entrada de la tabla tiene **autoría verificable** (se rechazan firmas no
+  válidas).
+- **Sobre firmado con fecha del autor:** cada aporte viaja como un sobre que el
+  autor **firma con su vault** (`{ sala, frag, ts }`, o `{ sala, retract, ts }`
+  para borrar). El `ts` del autor es la **versión** para *last-write-wins*:
+  re-aportar o borrar le gana a lo anterior.
+- **Sincronización por gossip:** en vivo vía **canales del proxy**
+  (`mundial-room-<id>`), cada peer **reenvía todos los sobres que conoce** (no
+  solo el suyo), así la sala converge aunque no todos estén online a la vez.
+  Reenviar es **seguro**: los sobres van firmados, un peer no puede alterarlos.
+  Usa el **cliente estándar del ecosistema** (`@gatoseya/closer-click-proxy-client`,
+  WebRTC + fallback al proxy), identificándose con la clave del vault (`identify`).
+- **Los aportes llegan offline:** además del envío en vivo, se difunden por
+  `sendByPubkey` a las pubkeys de los miembros (**cola offline 24 h** del proxy),
+  y un **buzón global** (`RoomInbox`) los aplica a la sala correcta aunque no la
+  tengas abierta al reconectar.
+- **Borrar mi aporte = tombstone firmado:** el autor firma un *retract*; el
+  miembro queda como **lápida** (oculta en la UI) con `ts` mayor, para que un
+  reenvío viejo **no lo reviva**. Solo el autor puede borrar lo suyo (va firmado).
+- **Sello de fecha (sellador):** al compartir/aportar se pide un **sello de
+  tiempo** a `signer.closer.click` (autoridad de tiempo del ecosistema): firma
+  `{ hash, ts }` con SU clave, probando **cuándo** existió el pronóstico sin verlo.
+  El sello viaja dentro del blob firmado; la UI marca cada aporte 🕓 *a tiempo* /
+  ⚠ *tarde o inválido* / — *sin fecha* contra el inicio del torneo. Es
+  best-effort: si el sellador no responde, se comparte igual sin sello.
+- **Privacidad configurable:** la sala puede **sellar** los pronósticos (ocultos
+  hasta el primer partido, 11-jun-2026) para evitar copia, o dejarlos visibles.
+- **Simular puntajes:** la barra de Salas tiene acceso a **Resultados** (los
+  oficiales) para cargar/simular marcadores y ver cómo cambia la tabla de la sala.
+- Vistas dentro de la sala: **Posiciones** (puntaje de cada miembro vs. oficial),
+  **Comparar** (campeón/final y ganadores de grupo lado a lado, con aciertos
+  resaltados) y **Miembros** (invitar + lista con verificación).
+
+### Persistencia y sync (store del ecosistema)
+- Pronósticos y salas se guardan **localmente en `localStorage`** (caché instantánea
+  que la app lee de forma síncrona) y se **espejan** al store estándar del
+  ecosistema **`@gatoseya/closer-click-store`** (`store.closer.click`, IndexedDB),
+  fusionando al arrancar lo que haya en la nube (*last-writer-wins* por `updatedAt`).
+- Esto habilita **sync entre dispositivos** (vía el sync cifrado del store a tu
+  Google Drive, opcional) sin perder el funcionamiento offline: si el store no
+  está disponible, todo sigue andando solo con `localStorage`.
+- Es **aditivo y best-effort** (`src/lib/cloud.ts`): cada registro (pronóstico,
+  sala) viaja como una entrada del store en su thread (`predictions`, `rooms`).
+  En tests se desactiva con `VITE_DISABLE_CLOUD=1` para no tocar el store real.
+
 ### PWA
 - Instalable; iconos y favicon generados desde `images/logo.svg`
   (`scripts/gen-icons.mjs`, corre en cada build).
@@ -122,17 +182,29 @@ src/
 │   ├── codec.ts        encode/decode compacto v3 (Lehmer + bits + base64url)
 │   ├── scoring.ts      puntuación de un pronóstico vs resultados oficiales
 │   ├── schedule.ts     fechas/horas UTC de los 104 partidos → hora local
-│   ├── identity.ts     singleton del vault id.closer.click
-│   ├── share.ts        firma ECDSA + blob binario del enlace (punto comprimido)
+│   ├── identity.ts     singleton del vault id.closer.click (+ hook vault de prueba e2e)
+│   ├── signer.ts       cliente del sellador de tiempo (signer.closer.click): sello + verificación
+│   ├── share.ts        firma ECDSA + blob binario del enlace (punto comprimido) + sello de fecha
 │   ├── proxy.ts        resolver token→identidad (challenge firmado por el proxy)
 │   ├── rating.ts       reputación derivada (web-of-trust)
-│   └── store.ts        librería de pronósticos en localStorage
+│   ├── store.ts        librería de pronósticos en localStorage
+│   ├── cloud.ts        espejo/rehidratación contra el store del ecosistema
+│   ├── roomStore.ts    salas en localStorage (Room/RoomMember, sellado) + espejo nube
+│   ├── room.ts         enlaces de sala firmados (#room=) y de aporte (#rm=)
+│   ├── connection.ts   conexión única al proxy (cliente estándar + identify vault)
+│   ├── roomSync.ts     sync de una sala: gossip de sobres firmados + cola offline
+│   └── inbox.ts        buzón global: invitaciones + aportes (sendByPubkey, cola 24 h)
+├── composables/
+│   └── useRooms.ts     estado compartido de salas (lista, activa, sync)
 ├── components/
 │   ├── GroupCard.vue / ThirdsBlock.vue   grupos + terceros arrastrables (Simple)
 │   ├── StandingsTable.vue                 tabla calculada (Medio/Completo)
 │   ├── ResultsTab.vue                     carga de resultados (grupos + llaves)
 │   ├── BracketTab.vue / MatchBox.vue      llaves simétricas con conectores
-│   ├── Sidebar.vue        librería + acciones + tipo + % + puntajes
+│   ├── Sidebar.vue        conmutador Pronósticos/Salas + listas + acciones
+│   ├── RoomsPage.vue      página de salas: crear/unirse + sala activa (tabs)
+│   ├── RoomLeaderboard.vue tabla de posiciones de la sala (vs. oficial)
+│   ├── RoomCompare.vue    comparación lado a lado (campeón/final/grupos)
 │   ├── ScoresTab.vue      pestaña "Puntajes": desglose de aciertos y por qué
 │   ├── ShareModal.vue     QR + redes + imprimir/PDF
 │   ├── ScoringInfo.vue    panel "¿Cómo se puntúa?" (pestañas por modo)
@@ -149,11 +221,18 @@ src/
 
 ```bash
 ./build.sh         # instala deps si falta y compila a dist/
-npm run dev        # desarrollo (http://localhost:5173)
+npm run dev        # desarrollo (HTTPS autofirmado: https://localhost:5173)
 npm run typecheck  # vue-tsc
 npm run lint:fix   # eslint
-npm run test:e2e   # Playwright (incluye round-trip "reconstruir desde el link")
+npm run test:e2e   # Playwright (round-trip del link + salas: enlaces, UI y
+                   #   sync EN VIVO entre dos navegadores vía el proxy)
 ```
+
+> **Dev sobre HTTPS:** el dev server usa `@vitejs/plugin-basic-ssl` (cert
+> autofirmado) para tener **contexto seguro** — necesario para el vault de
+> identidad, el portapapeles y Web Share al entrar desde otra máquina (LAN o
+> Tailscale). El navegador avisará del cert no confiable: aceptar. `allowedHosts`
+> ya incluye `.ts.net` y `.local`. (Producción no usa esto.)
 
 Deploy a GitHub Pages (dominio `mundial.closer.click`) vía GitHub Actions en
 cada push a `main` (`.github/workflows/deploy.yml`).

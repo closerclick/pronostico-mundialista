@@ -5,8 +5,12 @@ import type { SavedPrediction } from '../lib/store'
 import { scoreEntry } from '../lib/scoring'
 import { decodePrediction } from '../lib/codec'
 import { completeness } from '../lib/prediction'
+import { useRooms } from '../composables/useRooms'
 
 const { t } = useI18n()
+
+// Estado compartido de salas (para listar/seleccionar la sala activa).
+const { rooms, activeRoomId, openRoom, shareRoom, closeRoom, leaveRoom } = useRooms()
 
 // Etiqueta corta del tipo (modo) del pronóstico. Si el entry no lo guarda
 // (importados), se lee del código.
@@ -30,6 +34,7 @@ const props = defineProps<{
   open: boolean
   library: SavedPrediction[]
   activeId: string | null
+  section: 'predictions' | 'rooms'
 }>()
 const emit = defineEmits<{
   close: []
@@ -44,7 +49,20 @@ const emit = defineEmits<{
   print: [id: string]
   pdf: [id: string]
   scoring: []
+  setsection: [s: 'predictions' | 'rooms']
+  openresults: []
 }>()
+
+function modeTag (m: string): string {
+  return m === 'free' ? t('rooms.modeFree') : m === 'winlose' ? t('modes.medium') : m === 'score' ? t('modes.full') : t('modes.simple')
+}
+function selectRoom (id: string) { openRoom(id); emit('close') }
+function onShareRoom (id: string) { shareRoom(id); emit('close') }
+function newRoom () { closeRoom(); emit('close') }
+function onLeaveRoom (id: string, name: string) {
+  if (confirm(t('rooms.confirmLeave', { name }))) leaveRoom(id)
+}
+const sortedRooms = computed(() => [...rooms.value].sort((a, b) => b.updatedAt - a.updatedAt))
 
 const mine = computed(() => props.library.filter((p) => p.mine && !p.official).sort((a, b) => b.updatedAt - a.updatedAt))
 const imported = computed(() => props.library.filter((p) => !p.mine).sort((a, b) => b.updatedAt - a.updatedAt))
@@ -70,10 +88,18 @@ const scores = computed<Record<string, number>>(() => {
     <div class="scrim" @click="emit('close')"></div>
     <aside class="drawer">
       <header class="dh">
-        <span>{{ t('sidebar.title') }}</span>
+        <span>{{ section === 'rooms' ? t('rooms.title') : t('sidebar.title') }}</span>
         <button class="x" @click="emit('close')" :aria-label="t('common.close')">×</button>
       </header>
 
+      <!-- Conmutador de sección: Pronósticos / Salas -->
+      <nav class="section-tabs" data-testid="sb-sections">
+        <button :class="{ on: section === 'predictions' }" data-testid="sb-tab-predictions" @click="emit('setsection', 'predictions')">📋 {{ t('sidebar.tabPredictions') }}</button>
+        <button :class="{ on: section === 'rooms' }" data-testid="sb-tab-rooms" @click="emit('setsection', 'rooms')">🏟 {{ t('sidebar.tabRooms') }}</button>
+      </nav>
+
+      <!-- ===== SECCIÓN PRONÓSTICOS ===== -->
+      <template v-if="section === 'predictions'">
       <div class="actions">
         <button class="act new" data-testid="sb-new" @click="emit('create')">{{ t('sidebar.new') }}</button>
         <button class="act imp" data-testid="sb-import" @click="emit('import')">{{ t('sidebar.import') }}</button>
@@ -184,6 +210,46 @@ const scores = computed<Record<string, number>>(() => {
           </span>
         </div>
       </section>
+      </template>
+
+      <!-- ===== SECCIÓN SALAS ===== -->
+      <template v-else>
+        <div class="actions">
+          <button class="act new" data-testid="sb-new-room" @click="newRoom">➕ {{ t('rooms.create') }}</button>
+        </div>
+        <button class="scoring-btn" data-testid="sb-room-results" @click="emit('openresults')">▦ {{ t('rooms.simulateResults') }}</button>
+        <section class="group" data-testid="sb-section-rooms">
+          <h4>{{ t('rooms.mine') }}</h4>
+          <p v-if="!sortedRooms.length" class="empty">{{ t('rooms.emptyRooms') }}</p>
+          <div
+            v-for="r in sortedRooms"
+            :key="r.id"
+            class="item"
+            data-testid="room-item"
+            :data-id="r.id"
+            :class="{ active: r.id === activeRoomId }"
+            @click="selectRoom(r.id)"
+          >
+            <span class="nm">
+              <span class="nm-row">{{ r.name }}</span>
+              <span class="room-meta">
+                <small class="mode-tag">{{ modeTag(r.mode) }}</small>
+                <small class="fill-tag">👥 {{ r.members.length }}</small>
+                <small v-if="r.sealedUntil > Date.now()" class="seal-tag">🔒</small>
+                <small v-if="r.mine" class="host-tag">{{ t('rooms.host') }}</small>
+              </span>
+            </span>
+            <span class="tools">
+              <button class="share-i" :title="t('common.share')" @click.stop="onShareRoom(r.id)">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true">
+                  <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z" />
+                </svg>
+              </button>
+              <button :title="t('rooms.leave')" @click.stop="onLeaveRoom(r.id, r.name)">🗑</button>
+            </span>
+          </div>
+        </section>
+      </template>
     </aside>
   </div>
 </template>
@@ -228,6 +294,21 @@ const scores = computed<Record<string, number>>(() => {
   font-weight: 700; font-size: 0.82rem;
 }
 .scoring-btn:hover { background: rgba(65, 180, 255, 0.12); }
+
+/* Conmutador de sección Pronósticos / Salas */
+.section-tabs { display: flex; gap: 0.3rem; padding: 0.7rem 0.8rem 0.3rem; }
+.section-tabs button {
+  flex: 1; background: transparent; border: 1px solid var(--line); color: var(--muted);
+  padding: 0.5rem; border-radius: 8px; cursor: pointer; font-weight: 800; font-size: 0.8rem;
+}
+.section-tabs button.on { background: var(--green); color: #04210f; border-color: var(--green); }
+
+.room-meta { display: inline-flex; gap: 0.3rem; align-items: center; margin-top: 0.2rem; flex-wrap: wrap; }
+.seal-tag { font-size: 0.62rem; }
+.host-tag {
+  font-size: 0.6rem; font-weight: 700; text-transform: uppercase; color: var(--green);
+  border: 1px solid var(--green); border-radius: 5px; padding: 0 0.25rem;
+}
 .nm { display: flex; flex-direction: column; align-items: flex-start; font-size: 0.9rem; min-width: 0; }
 .nm-row { display: inline-flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; }
 .mode-tag {
