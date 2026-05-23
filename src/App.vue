@@ -20,6 +20,7 @@ import ThirdsBlock from './components/ThirdsBlock.vue'
 import BracketTab from './components/BracketTab.vue'
 import ScoresTab from './components/ScoresTab.vue'
 import ShareModal from './components/ShareModal.vue'
+import RoomShareModal from './components/RoomShareModal.vue'
 import PrintView from './components/PrintView.vue'
 import Sidebar from './components/Sidebar.vue'
 import ScoringInfo from './components/ScoringInfo.vue'
@@ -56,7 +57,7 @@ const inviteToast = ref<IncomingInvite | null>(null)
 let inbox: RoomInbox | null = null
 const {
   initRooms, importRoomInvite, importMemberContrib, applyEnvelope, openRoom, closeRoom,
-  ensureSync, stopSync, activeRoom, peerCount, syncStatus, roomTab,
+  ensureSync, stopSync, activeRoom, peerCount, syncStatus, roomShareOpen,
 } = useRooms()
 
 // Ciclo de sincronización ligado a la sección: solo conectamos al proxy cuando
@@ -813,7 +814,7 @@ onUnmounted(() => {
         {{ syncStatus === 'online' ? t('rooms.live', { n: peerCount }) : t('rooms.offline') }}
       </span>
       <div class="bar-actions" data-testid="room-bar-actions">
-        <button class="share-i" data-testid="room-bar-share" :title="t('common.share')" @click="roomTab = 'members'">
+        <button class="share-i" data-testid="room-bar-share" :title="t('common.share')" @click="roomShareOpen = true">
           <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor" aria-hidden="true">
             <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z" />
           </svg>
@@ -977,6 +978,8 @@ onUnmounted(() => {
       @print="handlePrint"
       @pdf="downloadPdf"
     />
+
+    <RoomShareModal />
 
     <ScoringInfo :open="scoringOpen" @close="scoringOpen = false" />
 
@@ -1191,6 +1194,16 @@ onUnmounted(() => {
 .bar-actions svg { display: block; }
 .bar-actions .pdf-img { display: block; width: 15px; height: 18px; }
 .bar-actions button:hover { background: rgba(255, 255, 255, 0.1); color: var(--text); }
+
+/* En táctil (mobile) los íconos de acción son difíciles de tocar: agrandamos el
+   área de toque (~44px) y los íconos. En escritorio (mouse) quedan como están. */
+@media (hover: none) and (pointer: coarse) {
+  .bar-actions { gap: 0.3rem; }
+  .bar-actions button { padding: 0.55rem; min-width: 44px; min-height: 44px; }
+  .bar-actions svg { width: 22px; height: 22px; }
+  .bar-actions .pdf-img { width: 19px; height: 23px; }
+  .mini { padding: 0.45rem 0.7rem; font-size: 0.8rem; }
+}
 .bar-actions .share-i { color: var(--azure); }
 .bar-actions .share-i:hover { background: rgba(65, 180, 255, 0.18); color: var(--azure); }
 .bar-actions .danger-i:hover { background: rgba(255, 80, 80, 0.18); color: #ff8585; }
@@ -1308,7 +1321,10 @@ onUnmounted(() => {
   border-radius: 6px; padding: 0.1rem 0.45rem; color: var(--muted);
 }
 .room-status.online { color: var(--green); border-color: var(--green); }
-.rooms-bar .mini { margin-left: auto; }
+/* Un único margin-left:auto (en el grupo de acciones) empuja acciones + "volver"
+   a la derecha; "volver" queda al borde, a la derecha del botón de compartir.
+   (Dos autos repartirían el espacio y dejarían "volver" al centro.) */
+.rooms-bar .bar-actions { margin-left: auto; }
 
 /* Toast de invitación a sala (buzón en vivo) */
 .invite-toast {

@@ -27,6 +27,8 @@ const unreachable = ref(false)
 // Sub-pestaña de la sala activa (compartida para que la barra lateral y el
 // header puedan llevar al usuario a la sección de invitar/compartir).
 const roomTab = ref<'table' | 'compare' | 'members'>('table')
+// Modal de compartir sala (QR + enlace + redes), abierto desde header/sidebar.
+const roomShareOpen = ref(false)
 
 let sync: RoomSync | null = null
 let inited = false
@@ -128,10 +130,10 @@ function openRoom (id: string) {
   if (r) startSync(r)
 }
 
-/** Abre la sala y la deja en la sub-pestaña de invitar/compartir. */
+/** Abre la sala y el modal de compartir (QR + enlace + redes). */
 function shareRoom (id: string) {
   openRoom(id)
-  roomTab.value = 'members'
+  roomShareOpen.value = true
 }
 
 function closeRoom () {
@@ -220,7 +222,7 @@ async function importMemberContrib (frag: string): Promise<string | null> {
 
 export function useRooms () {
   return {
-    rooms, activeRoom, activeRoomId, peerCount, syncStatus, myPubkey, myNick, contacts, unreachable, roomTab,
+    rooms, activeRoom, activeRoomId, peerCount, syncStatus, myPubkey, myNick, contacts, unreachable, roomTab, roomShareOpen,
     initRooms, reloadRooms, loadIdentityInfo,
     openRoom, shareRoom, closeRoom, createRoom, joinByLink, leaveRoom, persist,
     startSync, stopSync, ensureSync, updateSyncFrag,

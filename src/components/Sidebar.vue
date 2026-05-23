@@ -336,6 +336,18 @@ const scores = computed<Record<string, number>>(() => {
 .tools .share-i { color: var(--azure); }
 .tools .share-i:hover { background: rgba(65, 180, 255, 0.18); color: var(--azure); }
 
+/* En táctil agrandamos el área de toque (sin padding absurdo). DOS COLUMNAS: el
+   NOMBRE tiene prioridad (ancho mínimo garantizado) y NO se lo empuja; la columna
+   de botones se ENCOGE y ENVUELVE en varias filas dentro del espacio que sobra. */
+@media (hover: none) and (pointer: coarse) {
+  .item { align-items: flex-start; }
+  .nm { min-width: 5.5rem; }
+  .tools { flex: 0 1 auto; flex-shrink: 1; flex-wrap: wrap; justify-content: flex-end; gap: 0.1rem; }
+  .tools button { padding: 0.25rem; min-width: 34px; min-height: 34px; }
+  .tools svg { width: 18px; height: 18px; }
+  .tools .pdf-img { width: 16px; height: 20px; }
+}
+
 /* Escritorio: barra lateral fija, sin scrim ni animación */
 @media (min-width: 960px) {
   .drawer-root {
