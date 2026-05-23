@@ -13,6 +13,7 @@ import { shortKey } from '../lib/rating'
 import RoomLeaderboard from './RoomLeaderboard.vue'
 import RoomCompare from './RoomCompare.vue'
 import SocialShareButtons from './SocialShareButtons.vue'
+import { trackEvent } from '../lib/analytics'
 
 const { t } = useI18n()
 
@@ -61,6 +62,10 @@ async function doJoin () {
 // --- Detalle de sala --------------------------------------------------------
 // La sub-pestaña activa vive en useRooms (compartida con barra lateral/header).
 const rtab = roomTab
+function goRoomTab (tab: 'table' | 'compare' | 'members') {
+  rtab.value = tab
+  trackEvent('sala/' + tab)
+}
 
 const myPredictions = computed(() => props.library.filter((p) => p.mine && !p.official))
 function entryMode (p: SavedPrediction): string {
@@ -247,9 +252,9 @@ watch(activeRoom, (r) => {
     </div>
 
     <nav class="rtabs">
-      <button :class="{ on: rtab === 'table' }" @click="rtab = 'table'">{{ t('rooms.tabTable') }}</button>
-      <button :class="{ on: rtab === 'compare' }" @click="rtab = 'compare'">{{ t('rooms.tabCompare') }}</button>
-      <button :class="{ on: rtab === 'members' }" @click="rtab = 'members'">{{ t('rooms.tabMembers') }}</button>
+      <button :class="{ on: rtab === 'table' }" @click="goRoomTab('table')">{{ t('rooms.tabTable') }}</button>
+      <button :class="{ on: rtab === 'compare' }" @click="goRoomTab('compare')">{{ t('rooms.tabCompare') }}</button>
+      <button :class="{ on: rtab === 'members' }" @click="goRoomTab('members')">{{ t('rooms.tabMembers') }}</button>
     </nav>
 
     <RoomLeaderboard v-if="rtab === 'table'" :room="activeRoom" :official="official" :my-pubkey="myPubkey" />

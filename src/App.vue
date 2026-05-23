@@ -29,6 +29,7 @@ import IdentityPanel from './components/IdentityPanel.vue'
 import RoomsPage from './components/RoomsPage.vue'
 import { fragKind } from './lib/room'
 import { RoomInbox, type IncomingInvite } from './lib/inbox'
+import { trackEvent } from './lib/analytics'
 import { useRooms } from './composables/useRooms'
 import jsPDF from 'jspdf'
 import html2canvas from 'html2canvas'
@@ -65,6 +66,7 @@ const {
 watch(section, (s) => {
   if (s === 'rooms') ensureSync()
   else stopSync()
+  trackEvent('seccion/' + s)
 })
 
 // --- Instalación PWA --------------------------------------------------------
@@ -134,6 +136,7 @@ function goTab (target: Tab) {
   if (target === tab.value) return
   if (pending.value && !readonly.value && !isOfficial.value) { tabSwitch.value = target; return }
   tab.value = target
+  trackEvent('tab/' + target)
 }
 function applyAndGo () {
   confirmChanges()
