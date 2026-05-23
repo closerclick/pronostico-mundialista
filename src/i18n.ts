@@ -54,7 +54,7 @@ const es = {
     simpleTitle: 'Solo tabla de posiciones y terceros, a mano',
     mediumTitle: 'Gana / empata / pierde por partido',
     fullTitle: 'Con marcador (goles)',
-    cloneToType: 'Clonar a otro tipo',
+    cloneToType: 'Clonar pronóstico',
   },
   warn: {
     title: 'Pronóstico incompleto',
@@ -64,7 +64,7 @@ const es = {
   },
   typePicker: {
     newTitle: 'Elegí el tipo de pronóstico',
-    cloneTitle: 'Clonar a otro tipo',
+    cloneTitle: 'Clonar pronóstico',
     simpleDesc: 'El más fácil: arrastrás los equipos para ordenar cada grupo y armás las llaves. No cargás resultados de partidos.',
     mediumDesc: 'Por cada partido elegís quién gana o si empatan. Con eso se arman solas las posiciones y las llaves.',
     fullDesc: 'Lo más detallado: ponés el marcador (cuántos goles hizo cada equipo) en cada partido. Suma más puntos al acertar el resultado exacto.',
@@ -407,7 +407,7 @@ const en: typeof es = {
     simpleTitle: 'Just the standings table and thirds, by hand',
     mediumTitle: 'Win / draw / lose per match',
     fullTitle: 'With score (goals)',
-    cloneToType: 'Clone to another type',
+    cloneToType: 'Clone prediction',
   },
   warn: {
     title: 'Incomplete prediction',
@@ -417,7 +417,7 @@ const en: typeof es = {
   },
   typePicker: {
     newTitle: 'Choose the prediction type',
-    cloneTitle: 'Clone to another type',
+    cloneTitle: 'Clone prediction',
     simpleDesc: 'The easiest: drag teams to order each group and build the bracket. No match results.',
     mediumDesc: 'For each match you pick who wins or if they draw. Standings and bracket build themselves.',
     fullDesc: 'The most detailed: enter the score (how many goals each team scored) per match. Earns more points for exact scores.',

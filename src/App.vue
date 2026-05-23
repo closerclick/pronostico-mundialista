@@ -1279,7 +1279,7 @@ onUnmounted(() => {
   flex: 1; max-width: 240px; background: transparent; color: var(--muted);
   border: 1px solid var(--line); border-bottom: none;
   padding: 0.7rem; border-radius: 10px 10px 0 0; cursor: pointer; font-weight: 700;
-  font-family: var(--font-display); letter-spacing: 0.02em; font-size: 0.95rem;
+  font-family: var(--font-display); letter-spacing: 0.02em; font-size: 0.76rem;
 }
 .tabs button.active { background: var(--panel); color: var(--text); border-color: var(--azure); box-shadow: 0 -2px 12px rgba(65,180,255,0.15); }
 
