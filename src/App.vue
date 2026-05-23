@@ -11,7 +11,7 @@ import type { GameMode } from './lib/standings'
 import { encodePrediction, decodePrediction } from './lib/codec'
 import { parseShareFragment, buildShareUrl, getIdentity, SHARE_BASE } from './lib/share'
 import {
-  loadLibrary, saveLibrary, getActiveId, setActiveId, genId, type SavedPrediction,
+  loadLibrary, saveLibrary, getActiveId, setActiveId, genId, hydrateLibrary, type SavedPrediction,
 } from './lib/store'
 import GroupCard from './components/GroupCard.vue'
 import StandingsTable from './components/StandingsTable.vue'
@@ -25,6 +25,10 @@ import Sidebar from './components/Sidebar.vue'
 import ScoringInfo from './components/ScoringInfo.vue'
 import QRCode from 'qrcode'
 import IdentityPanel from './components/IdentityPanel.vue'
+import RoomsPage from './components/RoomsPage.vue'
+import { fragKind } from './lib/room'
+import { RoomInbox, type IncomingInvite } from './lib/inbox'
+import { useRooms } from './composables/useRooms'
 import jsPDF from 'jspdf'
 import html2canvas from 'html2canvas'
 
@@ -45,6 +49,22 @@ const importOpen = ref(false)
 const importText = ref('')
 const importError = ref('')
 const importing = ref(false)
+
+// --- Salas (otra "página": barra lateral + contenido propio) ---------------
+const section = ref<'predictions' | 'rooms'>('predictions')
+const inviteToast = ref<IncomingInvite | null>(null)
+let inbox: RoomInbox | null = null
+const {
+  initRooms, importRoomInvite, importMemberContrib, openRoom, closeRoom,
+  ensureSync, stopSync, activeRoom, peerCount, syncStatus,
+} = useRooms()
+
+// Ciclo de sincronización ligado a la sección: solo conectamos al proxy cuando
+// estás viendo Salas; al salir, cortamos para no mantener conexiones de fondo.
+watch(section, (s) => {
+  if (s === 'rooms') ensureSync()
+  else stopSync()
+})
 
 // --- Instalación PWA --------------------------------------------------------
 let deferredPrompt: { prompt: () => void; userChoice: Promise<unknown> } | null = null
@@ -592,6 +612,59 @@ async function isOwnAuthor (publickey: string): Promise<boolean> {
   return !!idi?.me?.publickey && idi.me.publickey === publickey
 }
 
+// Despacha un #fragmento según su tipo: invitación de sala, contribución de un
+// miembro o (por defecto) un pronóstico compartido.
+async function handleHash (frag: string): Promise<boolean> {
+  const kind = fragKind(frag)
+  if (kind === 'room') return handleRoomInvite(frag)
+  if (kind === 'member') return handleMemberContrib(frag)
+  return importFromHash(frag)
+}
+
+// Invitación de sala (#room=…): verifica el descriptor firmado, guarda la sala
+// (si es nueva) y la abre en la sección Salas.
+async function handleRoomInvite (frag: string): Promise<boolean> {
+  history.replaceState(null, '', location.pathname + location.search)
+  const id = await importRoomInvite(frag)
+  if (!id) { alert(t('rooms.invalidInvite')); return false }
+  section.value = 'rooms'
+  openRoom(id)
+  sidebarOpen.value = false
+  return true
+}
+
+// Contribución de un miembro (#rm=…): asocia su pronóstico firmado a la sala.
+async function handleMemberContrib (frag: string): Promise<boolean> {
+  history.replaceState(null, '', location.pathname + location.search)
+  const res = await importMemberContrib(frag)
+  if (res === 'NOROOM') { alert(t('rooms.needRoomFirst')); return false }
+  if (!res) { alert(t('rooms.contribInvalid')); return false }
+  section.value = 'rooms'
+  openRoom(res)
+  sidebarOpen.value = false
+  return true
+}
+
+// Desde la barra de SALAS: abrir los Resultados oficiales para simular/cargar
+// marcadores y ver cómo cambian los puntajes de la sala. Selecciona la entrada
+// oficial y muestra su pestaña Resultados (en la sección de pronósticos).
+function openOfficialResults () {
+  const off = officialEntry.value
+  if (off) select(off.id)
+  section.value = 'predictions'
+  tab.value = 'resultados'
+  sidebarOpen.value = false
+}
+
+// Acepta una invitación recibida en vivo (toast del buzón).
+async function acceptInvite () {
+  const inv = inviteToast.value
+  inviteToast.value = null
+  if (!inv) return
+  const frag = inv.url.includes('#') ? inv.url.slice(inv.url.indexOf('#') + 1) : inv.url
+  await handleRoomInvite(frag)
+}
+
 // Importa el pronóstico que viene en el #fragmento. Devuelve true si lo importó
 // (o si ya existía y lo seleccionó). Limpia el hash de la URL al terminar.
 async function importFromHash (frag: string): Promise<boolean> {
@@ -621,7 +694,16 @@ async function importFromHash (frag: string): Promise<boolean> {
 // pestaña no recarga la página), reimportamos.
 async function onHashChange () {
   const frag = location.hash.replace(/^#/, '')
-  if (frag) await importFromHash(frag)
+  if (frag) await handleHash(frag)
+}
+
+// Inicia el buzón de invitaciones a salas (si hay identidad), para recibir en
+// vivo invitaciones de contactos mientras la app está abierta.
+async function startInbox () {
+  const idi = await getIdentity()
+  if (!idi?.me?.publickey || inbox) return
+  inbox = new RoomInbox((inv) => { inviteToast.value = inv })
+  inbox.start()
 }
 
 onMounted(async () => {
@@ -632,19 +714,46 @@ onMounted(async () => {
   library.value = loadLibrary()
   ensureOfficialEntry()
 
+  // Estado compartido de salas (carga salas + identidad para autoría).
+  await initRooms()
+
   const frag = location.hash.replace(/^#/, '')
-  if (frag && await importFromHash(frag)) return
+  if (frag) {
+    const kind = fragKind(frag)
+    const handled = await handleHash(frag)
+    // Un pronóstico compartido ya quedó seleccionado por importFromHash; las
+    // salas, en cambio, se superponen y debajo igual necesitamos una selección.
+    if (handled && kind === 'prediction') { startInbox(); return }
+  }
 
   const saved = getActiveId()
   if (saved && library.value.some((p) => p.id === saved)) select(saved)
   else if (library.value.length) select(library.value[0]!.id)
   else create()
+
+  // El buzón de invitaciones corre en segundo plano (no bloquea el arranque).
+  startInbox()
+
+  // Rehidratación de pronósticos desde el store del ecosistema (segundo plano):
+  // fusiona lo que haya en la nube (otros dispositivos) sin interrumpir la vista.
+  hydrateLibrary(library.value)
+    .then(({ list, changed }) => {
+      if (!changed) return
+      library.value = list
+      saveLibrary(list)
+      ensureOfficialEntry()
+      // Si el pronóstico activo llegó actualizado desde la nube, refrescamos la vista.
+      if (activeId.value && library.value.some((p) => p.id === activeId.value)) select(activeId.value)
+    })
+    .catch(() => { /* sin nube, seguimos local */ })
 })
 
 onUnmounted(() => {
   window.removeEventListener('beforeinstallprompt', onBeforeInstallPrompt)
   window.removeEventListener('appinstalled', onAppInstalled)
   window.removeEventListener('hashchange', onHashChange)
+  inbox?.stop()
+  stopSync()
 })
 </script>
 
@@ -666,6 +775,9 @@ onUnmounted(() => {
       @print="tryPrint"
       @pdf="tryPdf"
       @scoring="scoringOpen = true; sidebarOpen = false"
+      :section="section"
+      @setsection="section = $event"
+      @openresults="openOfficialResults"
     />
     <div class="main">
     <header class="scoreboard">
@@ -686,6 +798,17 @@ onUnmounted(() => {
       </div>
     </header>
 
+    <!-- Barra activa de SALA: muestra claramente en qué sala estás. -->
+    <div v-if="section === 'rooms' && activeRoom" class="active-bar rooms-bar" data-testid="room-active-bar">
+      <span class="dot"></span>
+      <span class="active-name">🏟 {{ activeRoom.name }}</span>
+      <span class="room-status" :class="syncStatus">
+        {{ syncStatus === 'online' ? t('rooms.live', { n: peerCount }) : t('rooms.offline') }}
+      </span>
+      <button class="mini" @click="closeRoom">‹ {{ t('rooms.back') }}</button>
+    </div>
+
+    <template v-if="section === 'predictions'">
     <div class="active-bar">
       <span class="dot" :class="{ ro: readonly }"></span>
       <input
@@ -772,8 +895,11 @@ onUnmounted(() => {
         @click="goTab('puntajes')"
       >{{ t('tabs.scores') }}</button>
     </nav>
+    </template>
 
     <main class="content">
+      <RoomsPage v-if="section === 'rooms'" :library="library" :official="officialEntry" />
+      <template v-else>
       <section v-show="tab === 'grupos'" class="scrolly" data-testid="zone-grupos">
         <!-- Modo manual: tablas arrastrables (comportamiento clásico). -->
         <template v-if="pred.mode === 'manual'">
@@ -821,6 +947,7 @@ onUnmounted(() => {
       <section v-show="tab === 'puntajes'" class="scrolly" data-testid="zone-puntajes">
         <ScoresTab :entry="activeEntry" :official="officialEntry" />
       </section>
+      </template>
     </main>
 
     <footer class="footer">
@@ -847,6 +974,15 @@ onUnmounted(() => {
       @close="onIdentityClose"
       @changed="onIdentityChanged"
     />
+
+    <!-- Invitación a sala recibida en vivo (buzón). -->
+    <div v-if="inviteToast" class="invite-toast" data-testid="invite-toast">
+      <span class="it-msg">🏟 {{ t('rooms.inviteReceived', { who: inviteToast.nick || t('common.anonymous') }) }}</span>
+      <div class="it-actions">
+        <button class="it-ignore" @click="inviteToast = null">{{ t('common.close') }}</button>
+        <button class="it-open" @click="acceptInvite">{{ t('rooms.openInvite') }}</button>
+      </div>
+    </div>
 
     <!-- Cambios sin aplicar al cambiar de sección: aplicar o ignorar. -->
     <div v-if="tabSwitch" class="overlay" @click.self="tabSwitch = null">
@@ -1150,6 +1286,33 @@ onUnmounted(() => {
   border-radius: 10px; padding: 0.7rem; font-weight: 800; cursor: pointer;
 }
 .imp-go:disabled { opacity: 0.5; cursor: default; }
+
+/* Barra activa de SALA */
+.rooms-bar .active-name { font-weight: 800; color: var(--text); }
+.room-status {
+  font-size: 0.72rem; font-weight: 700; border: 1px solid var(--line);
+  border-radius: 6px; padding: 0.1rem 0.45rem; color: var(--muted);
+}
+.room-status.online { color: var(--green); border-color: var(--green); }
+.rooms-bar .mini { margin-left: auto; }
+
+/* Toast de invitación a sala (buzón en vivo) */
+.invite-toast {
+  position: fixed; left: 50%; bottom: 1.2rem; transform: translateX(-50%);
+  z-index: 500; background: var(--panel); border: 1px solid var(--azure);
+  border-radius: 12px; padding: 0.8rem 1rem; box-shadow: var(--shadow);
+  display: flex; align-items: center; gap: 0.9rem; max-width: 92vw;
+}
+.invite-toast .it-msg { font-size: 0.85rem; font-weight: 700; }
+.invite-toast .it-actions { display: flex; gap: 0.4rem; }
+.invite-toast .it-open {
+  background: var(--azure); color: #042038; border: none; border-radius: 8px;
+  padding: 0.4rem 0.8rem; font-weight: 800; cursor: pointer;
+}
+.invite-toast .it-ignore {
+  background: transparent; color: var(--muted); border: 1px solid var(--line);
+  border-radius: 8px; padding: 0.4rem 0.7rem; cursor: pointer;
+}
 
 @media (max-width: 480px) {
   .title h1 { font-size: 1.25rem; }

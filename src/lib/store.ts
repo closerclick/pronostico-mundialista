@@ -2,6 +2,7 @@
 // importados de otras personas (firmados, solo lectura).
 
 import type { GameMode, Results } from './standings'
+import { pullThread, syncThread, THREAD_PREDICTIONS } from './cloud'
 
 export interface SavedAuthor {
   publickey: string
@@ -49,6 +50,26 @@ export function loadLibrary (): SavedPrediction[] {
 
 export function saveLibrary (list: SavedPrediction[]): void {
   try { localStorage.setItem(LIB_KEY, JSON.stringify(list)) } catch { /* */ }
+  // Espejo en la nube (fire-and-forget; no bloquea ni rompe si el store no está).
+  void syncThread(THREAD_PREDICTIONS, list.map((p) => ({ id: p.id, ts: p.updatedAt, data: p })))
+}
+
+/**
+ * Trae los pronósticos del store del ecosistema y los fusiona con la lista local
+ * (last-writer-wins por `updatedAt`). Devuelve la lista fusionada y si cambió.
+ * Pensado para correr en segundo plano al arrancar (no bloquea el render).
+ */
+export async function hydrateLibrary (local: SavedPrediction[]): Promise<{ list: SavedPrediction[]; changed: boolean }> {
+  const remote = await pullThread<SavedPrediction>(THREAD_PREDICTIONS)
+  if (!remote.length) return { list: local, changed: false }
+  const byId = new Map(local.map((p) => [p.id, p]))
+  let changed = false
+  for (const r of remote) {
+    if (!r?.id) continue
+    const cur = byId.get(r.id)
+    if (!cur || (r.updatedAt || 0) > (cur.updatedAt || 0)) { byId.set(r.id, r); changed = true }
+  }
+  return { list: [...byId.values()], changed }
 }
 
 export function getActiveId (): string | null {

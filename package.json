@@ -14,6 +14,8 @@
   },
   "dependencies": {
     "@gatoseya/closer-click-identity": "^0.8.0",
+    "@gatoseya/closer-click-proxy-client": "^0.4.0",
+    "@gatoseya/closer-click-store": "^0.3.0",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
     "qrcode": "^1.5.4",
@@ -27,6 +29,7 @@
     "@types/qrcode": "^1.5.5",
     "@typescript-eslint/eslint-plugin": "^8.20.0",
     "@typescript-eslint/parser": "^8.20.0",
+    "@vitejs/plugin-basic-ssl": "^2.3.0",
     "@vitejs/plugin-vue": "^6.0.1",
     "@vue/tsconfig": "^0.8.1",
     "eslint": "^9.18.0",

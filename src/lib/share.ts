@@ -24,16 +24,16 @@ const PAYLOAD_VERSION = 1
 
 // ---- base64 / base64url ----------------------------------------------------
 
-function b64ToBytes (b64: string): Uint8Array {
+export function b64ToBytes (b64: string): Uint8Array {
   const bin = atob(b64)
   const out = new Uint8Array(bin.length)
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
   return out
 }
-function b64urlToBytes (s: string): Uint8Array {
+export function b64urlToBytes (s: string): Uint8Array {
   return b64ToBytes(s.replace(/-/g, '+').replace(/_/g, '/'))
 }
-function bytesToB64url (bytes: Uint8Array): string {
+export function bytesToB64url (bytes: Uint8Array): string {
   let bin = ''
   for (const b of bytes) bin += String.fromCharCode(b)
   return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
@@ -41,7 +41,7 @@ function bytesToB64url (bytes: Uint8Array): string {
 
 // El vault firma canonicalStringify(data); para un string eso es
 // JSON.stringify(string). Lo replicamos para verificar.
-function canonicalBytes (code: string): Uint8Array {
+export function canonicalBytes (code: string): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(code))
 }
 
@@ -74,7 +74,7 @@ function modpow (base: bigint, exp: bigint, mod: bigint): bigint {
 
 // Reconstruye la coordenada Y (32 bytes) a partir de X y la paridad (prefijo
 // 0x03 → impar). P-256 cumple p ≡ 3 (mod 4): y = (y²)^((p+1)/4) mod p.
-function decompressY (xBytes: Uint8Array, odd: boolean): Uint8Array {
+export function decompressY (xBytes: Uint8Array, odd: boolean): Uint8Array {
   const x = bytesToBig(xBytes)
   const rhs = (modpow(x, 3n, P256_P) + P256_A * x + P256_B) % P256_P
   let y = modpow(rhs, (P256_P + 1n) / 4n, P256_P)
@@ -84,7 +84,7 @@ function decompressY (xBytes: Uint8Array, odd: boolean): Uint8Array {
 
 // ---- API -------------------------------------------------------------------
 
-function concatBytes (parts: Uint8Array[]): Uint8Array {
+export function concatBytes (parts: Uint8Array[]): Uint8Array {
   const total = parts.reduce((s, p) => s + p.length, 0)
   const out = new Uint8Array(total)
   let off = 0
@@ -175,6 +175,61 @@ export async function parseShareFragment (frag: string): Promise<IncomingPredict
     const yBytes = decompressY(xBytes, prefix === 0x03)
     const jwk = { kty: 'EC', crv: 'P-256', x: bytesToB64url(xBytes), y: bytesToB64url(yBytes), ext: true }
     return verifyAndBuild(bytesToB64url(codeBytes), sig, jwk, nick, name)
+  } catch { return null }
+}
+
+// ---- Blob genérico firmado -------------------------------------------------
+// Reutiliza el mismo empaquetado (punto comprimido P-256 + firma ECDSA) que los
+// pronósticos, pero el "contenido" es un string arbitrario: lo usan las SALAS
+// para firmar el descriptor (JSON) del creador. Layout:
+//   [0] versión · [1..65) firma · [65] prefijo · [66..98) X · [98..100) len · [+] contenido utf8
+export async function signBlob (content: string, version: number): Promise<{ blob: string; publickey: string; nickname?: string }> {
+  const id = await getIdentity()
+  if (!id) throw new Error('No se pudo conectar a la identidad (id.closer.click).')
+  const { signature, publickey } = await id.signData(content)
+  const jwk = JSON.parse(publickey) as { x: string; y: string }
+  const sig = b64ToBytes(signature)
+  const xBytes = b64urlToBytes(jwk.x)
+  const yBytes = b64urlToBytes(jwk.y)
+  const prefix = (yBytes[31]! & 1) === 1 ? 0x03 : 0x02
+  const contentB = new TextEncoder().encode(content)
+  const blob = concatBytes([
+    Uint8Array.of(version),
+    sig,
+    Uint8Array.of(prefix),
+    xBytes,
+    Uint8Array.of((contentB.length >> 8) & 0xff, contentB.length & 0xff),
+    contentB,
+  ])
+  return { blob: bytesToB64url(blob), publickey, nickname: id.me?.nickname }
+}
+
+export interface VerifiedBlob { content: string; verified: boolean; publickey: string }
+
+/** Lee y verifica un blob firmado genérico (descriptor de sala). */
+export async function verifyBlob (frag: string, version: number): Promise<VerifiedBlob | null> {
+  let bytes: Uint8Array
+  try { bytes = b64urlToBytes(frag) } catch { return null }
+  if (bytes.length < 1 + 64 + 33 + 2) return null
+  if (bytes[0] !== version) return null
+  try {
+    let pos = 1
+    const sig = bytes.slice(pos, pos + 64); pos += 64
+    const prefix = bytes[pos]!; pos += 1
+    const xBytes = bytes.slice(pos, pos + 32); pos += 32
+    const len = (bytes[pos]! << 8) | bytes[pos + 1]!; pos += 2
+    const content = new TextDecoder().decode(bytes.slice(pos, pos + len))
+    const yBytes = decompressY(xBytes, prefix === 0x03)
+    const jwk = { kty: 'EC', crv: 'P-256', x: bytesToB64url(xBytes), y: bytesToB64url(yBytes), ext: true }
+    let verified = false
+    try {
+      const key = await crypto.subtle.importKey('jwk', jwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify'])
+      verified = await crypto.subtle.verify(
+        { name: 'ECDSA', hash: { name: 'SHA-256' } }, key,
+        sig as BufferSource, canonicalBytes(content) as BufferSource,
+      )
+    } catch (e) { console.warn('verifyBlob falló:', e) }
+    return { content, verified, publickey: JSON.stringify(jwk) }
   } catch { return null }
 }
 

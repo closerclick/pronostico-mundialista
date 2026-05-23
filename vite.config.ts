@@ -1,11 +1,15 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { VitePWA } from 'vite-plugin-pwa'
+import basicSsl from '@vitejs/plugin-basic-ssl'
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
     vue(),
+    // HTTPS autofirmado en desarrollo (contexto seguro para el vault de identidad,
+    // portapapeles y Web Share). El navegador avisará del cert no confiable: aceptar.
+    basicSsl(),
     VitePWA({
       // DESARROLLO: SW autodestructivo. Limpia cualquier caché previa y se
       // desregistra para que SIEMPRE se sirva contenido fresco desde la red.
@@ -41,4 +45,10 @@ export default defineConfig({
     })
   ],
   base: './',
+  server: {
+    host: true,
+    // Permite servir detrás de Tailscale (MagicDNS) y otros hosts de la LAN.
+    // Vite 7 bloquea hosts desconocidos por protección de DNS rebinding.
+    allowedHosts: ['.ts.net', '.local', 'localhost'],
+  },
 })
