@@ -193,7 +193,8 @@ src/
 │   ├── room.ts         enlaces de sala firmados (#room=) y de aporte (#rm=)
 │   ├── connection.ts   conexión única al proxy (cliente estándar + identify vault)
 │   ├── roomSync.ts     sync de una sala: gossip de sobres firmados + cola offline
-│   └── inbox.ts        buzón global: invitaciones + aportes (sendByPubkey, cola 24 h)
+│   ├── inbox.ts        buzón global: invitaciones + aportes (sendByPubkey, cola 24 h)
+│   └── analytics.ts    GoatCounter cookieless (solo prod), paths con dominio
 ├── composables/
 │   └── useRooms.ts     estado compartido de salas (lista, activa, sync)
 ├── components/
@@ -236,6 +237,21 @@ npm run test:e2e   # Playwright (round-trip del link + salas: enlaces, UI y
 
 Deploy a GitHub Pages (dominio `mundial.closer.click`) vía GitHub Actions en
 cada push a `main` (`.github/workflows/deploy.yml`).
+
+## Analítica
+
+Tráfico **cookieless y autohosteado** con **GoatCounter** en `goat.closer.click`
+(agregados, sin cookies ni datos personales). Solo cuenta en **producción**
+(`mundial.closer.click`): nunca en dev/local, LAN ni previews (`src/lib/analytics.ts`).
+
+> **Convención del ecosistema:** `goat.closer.click` es una instancia **compartida**
+> por todas las apps CloserClick. Para que en el dashboard se distinga a qué app
+> pertenece cada link, **los paths deben llevar el dominio por delante**
+> (p. ej. `mundial.closer.click/tab/scores` en vez de `/tab/scores`). Esto aplica
+> tanto a los pageviews (callback `path` definido antes de cargar `count.js`) como
+> a los eventos (`trackEvent`). El resto de las apps lo hacen con
+> `window.goatcounter={path:function(p){return location.hostname+p}}` en su
+> `index.html`.
 
 ## Estado
 

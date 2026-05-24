@@ -18,8 +18,20 @@ function enabled (): boolean {
   return typeof window !== 'undefined' && location.hostname === PROD_HOST
 }
 
+// Como goat.closer.click es compartido por varias apps del ecosistema, los
+// paths deben llevar el dominio por delante (p. ej. `mundial.closer.click/tab/x`)
+// para distinguir a qué app pertenece cada link en el dashboard.
+function withDomain (path: string): string {
+  return `${PROD_HOST}/${path.replace(/^\/+/, '')}`
+}
+
 export function initAnalytics (): void {
   if (!enabled()) return
+  // Definido ANTES de cargar count.js: el callback `path` prefija el dominio en
+  // los pageviews automáticos. Se conserva al inicializarse GoatCounter.
+  ;(window as unknown as { goatcounter?: { path: (p: string) => string } }).goatcounter = {
+    path: (p: string) => withDomain(p),
+  }
   const s = document.createElement('script')
   s.async = true
   s.src = `${GOATCOUNTER}/count.js`
@@ -34,5 +46,5 @@ export function initAnalytics (): void {
 export function trackEvent (path: string, title?: string): void {
   if (!enabled()) return
   const g = gc()
-  if (g) g.count({ path, title: title ?? path, event: true })
+  if (g) g.count({ path: withDomain(path), title: title ?? path, event: true })
 }
