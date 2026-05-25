@@ -6,7 +6,13 @@ import basicSsl from '@vitejs/plugin-basic-ssl'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
-    vue(),
+    vue({
+      template: {
+        compilerOptions: {
+          isCustomElement: (tag) => tag === 'closer-click-support',
+        },
+      },
+    }),
     // HTTPS autofirmado en desarrollo (contexto seguro para el vault de identidad,
     // portapapeles y Web Share). El navegador avisará del cert no confiable: aceptar.
     basicSsl(),
