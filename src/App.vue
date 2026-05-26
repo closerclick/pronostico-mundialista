@@ -804,7 +804,7 @@ onUnmounted(() => {
           <button data-testid="lang-es" :class="{ on: locale === 'es' }" @click="changeLocale('es')">{{ t('lang.es') }}</button>
           <button data-testid="lang-en" :class="{ on: locale === 'en' }" @click="changeLocale('en')">{{ t('lang.en') }}</button>
         </div>
-        <closer-click-support href="https://ko-fi.com/seyacat" :lang="locale"></closer-click-support>
+        <closer-click-support href="https://ko-fi.com/seyacat" repo="seyacat/pronostico-mundialista" discord="https://discord.gg/GGn6NXNQMp" :lang="locale"></closer-click-support>
         <!-- Botón circular de identidad (siempre visible) -->
         <button class="identity-btn" data-testid="identity-btn" @click="openProfile" :aria-label="t('header.identity')" :title="t('header.identity')">👤</button>
       </div>
