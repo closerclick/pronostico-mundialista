@@ -4,7 +4,7 @@ import { VitePWA } from 'vite-plugin-pwa'
 import basicSsl from '@vitejs/plugin-basic-ssl'
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   plugins: [
     vue({
       template: {
@@ -17,10 +17,11 @@ export default defineConfig({
     // portapapeles y Web Share). El navegador avisará del cert no confiable: aceptar.
     basicSsl(),
     VitePWA({
-      // DESARROLLO: SW autodestructivo. Limpia cualquier caché previa y se
-      // desregistra para que SIEMPRE se sirva contenido fresco desde la red.
-      // (Para producción, quitar `selfDestroying` para volver a instalar la PWA.)
-      selfDestroying: true,
+      // DESARROLLO (command === 'serve'): SW autodestructivo. Limpia caché previa
+      // y se desregistra para servir SIEMPRE contenido fresco desde la red.
+      // PRODUCCIÓN (build): SW real y persistente — necesario para Web Push
+      // (el timbre despierta este SW) y para que la PWA sea instalable.
+      selfDestroying: command === 'serve',
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg'],
       manifest: {
@@ -39,14 +40,18 @@ export default defineConfig({
           { src: 'icons/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' }
         ]
       },
-      // Sin precache: el SW solo existe para que la app sea instalable como PWA.
+      // Sin precache: el SW existe para instalabilidad PWA + Web Push.
       workbox: {
         globPatterns: [],
         skipWaiting: true,
         clientsClaim: true,
         cleanupOutdatedCaches: true,
         runtimeCaching: [],
-        navigateFallback: null
+        navigateFallback: null,
+        // Inyecta el handler de Web Push (push + notificationclick) en el SW de
+        // Workbox. El archivo se sirve desde public/ (copia del paquete
+        // @gatoseya/closer-click-proxy-client/sw/). No se registra un 2º SW.
+        importScripts: ['closer-click-push-sw.js']
       }
     })
   ],
@@ -57,4 +62,4 @@ export default defineConfig({
     // Vite 7 bloquea hosts desconocidos por protección de DNS rebinding.
     allowedHosts: ['.ts.net', '.local', 'localhost'],
   },
-})
+}))

@@ -346,6 +346,10 @@ const es = {
     noRatings: 'Sin valoraciones todavía.',
     anon: 'Anónimo',
     sourceMine: 'tuya',
+    notifTitle: 'Notificaciones',
+    notifHint: 'Avisarte cuando te invitan a una sala o un miembro carga su pronóstico, aunque tengas la app cerrada. El aviso no lleva contenido.',
+    notifUnsupported: 'Tu navegador no soporta notificaciones. En iOS, instalá la app en la pantalla de inicio primero.',
+    notifDenied: 'Bloqueaste las notificaciones. Habilitalas desde los ajustes del navegador.',
   },
   print: {
     author: 'por {author}',
@@ -697,6 +701,10 @@ const en: typeof es = {
     noRatings: 'No ratings yet.',
     anon: 'Anonymous',
     sourceMine: 'yours',
+    notifTitle: 'Notifications',
+    notifHint: 'Get notified when you are invited to a room or a member submits their prediction, even with the app closed. The alert carries no content.',
+    notifUnsupported: 'Your browser does not support notifications. On iOS, install the app to your home screen first.',
+    notifDenied: 'You blocked notifications. Enable them from your browser settings.',
   },
   print: {
     author: 'by {author}',

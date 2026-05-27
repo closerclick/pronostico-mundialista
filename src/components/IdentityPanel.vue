@@ -5,8 +5,15 @@ import type { PeerInfo } from '@gatoseya/closer-click-identity'
 import { getIdentity, type IdentityInstance } from '../lib/identity'
 import { buildTrustMap, computeDerivedRating, shortKey } from '../lib/rating'
 import { resolveTokenToIdentity, ProxyTokenError } from '../lib/proxy'
+import { useNotifications } from '../lib/notifications'
 
 const { t } = useI18n()
+
+const notif = useNotifications()
+async function toggleNotif () {
+  if (notif.enabled.value) await notif.disable()
+  else await notif.enable()
+}
 
 const props = defineProps<{ open: boolean; focusPubkey?: string | null; focusNick?: string | null; requireNick?: boolean }>()
 const emit = defineEmits<{ close: []; changed: [] }>()
@@ -193,6 +200,24 @@ function myRatingOf (p: PeerInfo): number { return p.myRating?.rating ?? 0 }
           </button>
         </div>
         <p class="hint">{{ t('identity.nickHint') }}</p>
+
+        <!-- Notificaciones push -->
+        <div class="notif">
+          <div class="notif-row">
+            <span class="lbl">{{ t('identity.notifTitle') }}</span>
+            <button
+              class="switch"
+              :class="{ on: notif.enabled.value }"
+              :disabled="notif.busy.value || !notif.supported.value"
+              :aria-pressed="notif.enabled.value"
+              @click="toggleNotif"
+            ><span class="knob"></span></button>
+          </div>
+          <p class="hint">{{ t('identity.notifHint') }}</p>
+          <p v-if="!notif.supported.value" class="hint warn-note">{{ t('identity.notifUnsupported') }}</p>
+          <p v-else-if="notif.permission.value === 'denied'" class="hint warn-note">{{ t('identity.notifDenied') }}</p>
+          <p v-if="notif.error.value" class="err">{{ notif.error.value }}</p>
+        </div>
       </section>
 
       <!-- CONTACTOS -->
@@ -322,4 +347,22 @@ h3 { color: var(--azure); margin-bottom: 0.8rem; }
 .pos { width: 1.4rem; text-align: center; font-family: var(--font-display); color: var(--muted); }
 .score { font-weight: 800; color: var(--gold); font-size: 0.9rem; display: flex; align-items: center; gap: 0.2rem; }
 .score small { color: var(--muted); font-weight: 400; }
+
+/* Notificaciones */
+.notif { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border, rgba(255,255,255,0.1)); }
+.notif-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.warn-note { color: var(--gold); }
+.switch {
+  flex-shrink: 0; width: 44px; height: 26px; border-radius: 999px;
+  border: 1px solid var(--border, rgba(255,255,255,0.2));
+  background: rgba(255,255,255,0.12); position: relative; cursor: pointer; padding: 0;
+  transition: background .15s ease;
+}
+.switch .knob {
+  position: absolute; top: 2px; left: 2px; width: 20px; height: 20px;
+  border-radius: 50%; background: #fff; transition: transform .15s ease;
+}
+.switch.on { background: var(--gold); border-color: var(--gold); }
+.switch.on .knob { transform: translateX(18px); }
+.switch:disabled { opacity: .5; cursor: not-allowed; }
 </style>
