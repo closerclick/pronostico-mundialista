@@ -1,5 +1,5 @@
 // Conexión única al proxy del ecosistema usando el cliente ESTÁNDAR
-// `@gatoseya/closer-click-proxy-client` (igual que el messenger). Una sola
+// `@closerclick/closer-click-proxy-client` (igual que el messenger). Una sola
 // instancia compartida para toda la app: canales de sala, buzón de invitaciones
 // y cola offline.
 //
@@ -8,7 +8,7 @@
 // Así el proxy mapea token↔clave-del-vault y habilita `sendByPubkey` (cola
 // offline 24 h), unificando la identidad de transporte con la de firma.
 
-import { getWebSocketProxyClient, type WebSocketProxyClient } from '@gatoseya/closer-click-proxy-client'
+import { getWebSocketProxyClient, type WebSocketProxyClient } from '@closerclick/closer-click-proxy-client'
 import { getIdentity } from './identity'
 
 const WS_URL: string =

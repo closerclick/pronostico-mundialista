@@ -1,5 +1,5 @@
 // Sincronización EN VIVO de una sala usando el cliente ESTÁNDAR del ecosistema
-// (`@gatoseya/closer-click-proxy-client`, vía connection.ts). Cada sala es un
+// (`@closerclick/closer-click-proxy-client`, vía connection.ts). Cada sala es un
 // canal público `mundial-room-<roomId>`: los miembros conectados se publican,
 // se descubren (list / channel_joined) y se intercambian sus pronósticos
 // firmados con `client.send` (que usa WebRTC con fallback al proxy).
@@ -8,7 +8,7 @@
 //   { type:'ROOM_PREDICTION', roomId, frag }   pronóstico firmado de un miembro
 //   { type:'ROOM_REQUEST', roomId }            pedir el pronóstico a un peer
 
-import type { WebSocketProxyClient } from '@gatoseya/closer-click-proxy-client'
+import type { WebSocketProxyClient } from '@closerclick/closer-click-proxy-client'
 import { ensureConnected, getProxyClient } from './connection'
 
 const CHANNEL_PREFIX = 'mundial-room-'

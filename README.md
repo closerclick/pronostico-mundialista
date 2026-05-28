@@ -81,7 +81,7 @@ o ignorarlos**.
 ### Multi-pronóstico + identidad
 - **Mis pronósticos** (editables), **Pronósticos amigos** (importados, solo
   lectura) y **Resultados** (oficiales). Crear, renombrar, eliminar, duplicar.
-- **Mi identidad** (vault `id.closer.click` vía `@gatoseya/closer-click-identity`):
+- **Mi identidad** (vault `id.closer.click` vía `@closerclick/closer-click-identity`):
   perfil (apodo que firma), **contactos** por **token** corto del proxy (resuelto
   con challenge/response firmado) y **rankings** (web-of-trust, estrellas).
 
@@ -126,7 +126,7 @@ o ignorarlos**.
   (`mundial-room-<id>`), cada peer **reenvía todos los sobres que conoce** (no
   solo el suyo), así la sala converge aunque no todos estén online a la vez.
   Reenviar es **seguro**: los sobres van firmados, un peer no puede alterarlos.
-  Usa el **cliente estándar del ecosistema** (`@gatoseya/closer-click-proxy-client`,
+  Usa el **cliente estándar del ecosistema** (`@closerclick/closer-click-proxy-client`,
   WebRTC + fallback al proxy), identificándose con la clave del vault (`identify`).
 - **Los aportes llegan offline:** además del envío en vivo, se difunden por
   `sendByPubkey` a las pubkeys de los miembros (**cola offline 24 h** del proxy),
@@ -152,7 +152,7 @@ o ignorarlos**.
 ### Persistencia y sync (store del ecosistema)
 - Pronósticos y salas se guardan **localmente en `localStorage`** (caché instantánea
   que la app lee de forma síncrona) y se **espejan** al store estándar del
-  ecosistema **`@gatoseya/closer-click-store`** (`store.closer.click`, IndexedDB),
+  ecosistema **`@closerclick/closer-click-store`** (`store.closer.click`, IndexedDB),
   fusionando al arrancar lo que haya en la nube (*last-writer-wins* por `updatedAt`).
 - Esto habilita **sync entre dispositivos** (vía el sync cifrado del store a tu
   Google Drive, opcional) sin perder el funcionamiento offline: si el store no

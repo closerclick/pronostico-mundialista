@@ -20,7 +20,7 @@
 // con una app del ecosistema que sepa responder al challenge. Si está offline
 // o el token no existe, caemos en timeout (mensaje claro al usuario).
 //
-// NOTA: a diferencia del messenger no usamos `@gatoseya/closer-click-proxy-client`
+// NOTA: a diferencia del messenger no usamos `@closerclick/closer-click-proxy-client`
 // (no es dependencia de este proyecto). Implementamos el subconjunto del
 // protocolo de cable que necesitamos: enviar a `to:[token]` un `message`
 // string y recibir frames `{type:'message', from, message}`.
@@ -45,7 +45,7 @@ function parseMessage (raw: string): { type: string | null; payload: unknown } {
 }
 
 // El vault de identidad expone estos métodos (ver el .d.ts del paquete
-// @gatoseya/closer-click-identity). Solo tipamos lo que usamos aquí para no
+// @closerclick/closer-click-identity). Solo tipamos lo que usamos aquí para no
 // acoplarnos al import del tipo completo.
 interface ChallengeMaker {
   makeChallenge (): Promise<{ nonce: string }>

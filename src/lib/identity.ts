@@ -2,7 +2,7 @@
 // Lo usan la firma de pronósticos (share.ts) y el panel de perfil/contactos/
 // rankings (IdentityPanel). Conecta una sola vez vía iframe + postMessage.
 
-import { Identity } from '@gatoseya/closer-click-identity'
+import { Identity } from '@closerclick/closer-click-identity'
 
 export type IdentityInstance = InstanceType<typeof Identity>
 

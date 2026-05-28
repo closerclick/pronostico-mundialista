@@ -4,7 +4,7 @@
 // barra lateral (igual que los pronósticos) y el área principal muestra la activa.
 
 import { ref, computed } from 'vue'
-import type { PeerInfo } from '@gatoseya/closer-click-identity'
+import type { PeerInfo } from '@closerclick/closer-click-identity'
 import { getIdentity } from '../lib/identity'
 import {
   loadRooms, saveRooms, getActiveRoomId, setActiveRoomId, upsertMember, hydrateRooms,

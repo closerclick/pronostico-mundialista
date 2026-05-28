@@ -50,7 +50,7 @@ export default defineConfig(({ command }) => ({
         navigateFallback: null,
         // Inyecta el handler de Web Push (push + notificationclick) en el SW de
         // Workbox. El archivo se sirve desde public/ (copia del paquete
-        // @gatoseya/closer-click-proxy-client/sw/). No se registra un 2º SW.
+        // @closerclick/closer-click-proxy-client/sw/). No se registra un 2º SW.
         importScripts: ['closer-click-push-sw.js']
       }
     })

@@ -3,7 +3,7 @@
 // ponderado de los endorsements cuyo autor es alguien a quien yo he valorado
 // (peso = miConfianza / 5). Los endorsements de desconocidos se ignoran.
 
-import type { PeerInfo } from '@gatoseya/closer-click-identity'
+import type { PeerInfo } from '@closerclick/closer-click-identity'
 
 export interface DerivedRating {
   value: number | null

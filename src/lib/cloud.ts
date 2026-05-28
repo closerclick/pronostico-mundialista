@@ -1,6 +1,6 @@
 // Capa de persistencia en la nube del ecosistema: espeja y rehidrata los datos
 // locales (pronósticos, salas) contra el store estándar `store.closer.click`
-// (`@gatoseya/closer-click-store` ≥ 0.3.0, IndexedDB + sync opcional a Drive).
+// (`@closerclick/closer-click-store` ≥ 0.3.0, IndexedDB + sync opcional a Drive).
 //
 // Es ADITIVA: localStorage sigue siendo la caché instantánea y la fuente que la
 // app lee de forma síncrona. Esta capa, en segundo plano, sube los cambios y
@@ -10,7 +10,7 @@
 // Modelo: cada registro (un pronóstico, una sala) es una ENTRADA del store en su
 // thread (`predictions`, `rooms`), con `id` del registro y `ts = updatedAt`.
 
-import { Store } from '@gatoseya/closer-click-store'
+import { Store } from '@closerclick/closer-click-store'
 
 export const THREAD_PREDICTIONS = 'predictions'
 export const THREAD_ROOMS = 'rooms'

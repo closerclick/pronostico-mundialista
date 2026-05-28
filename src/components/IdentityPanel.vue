@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { PeerInfo } from '@gatoseya/closer-click-identity'
+import type { PeerInfo } from '@closerclick/closer-click-identity'
 import { getIdentity, type IdentityInstance } from '../lib/identity'
 import { buildTrustMap, computeDerivedRating, shortKey } from '../lib/rating'
 import { resolveTokenToIdentity, ProxyTokenError } from '../lib/proxy'
