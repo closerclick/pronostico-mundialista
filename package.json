@@ -16,7 +16,7 @@
     "@gatoseya/closer-click-identity": "^0.8.0",
     "@gatoseya/closer-click-proxy-client": "^0.5.1",
     "@gatoseya/closer-click-store": "^0.3.0",
-    "@gatoseya/closer-click-support": "^0.3.7",
+    "@gatoseya/closer-click-support": "^0.3.8",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
     "qrcode": "^1.5.4",
