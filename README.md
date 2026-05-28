@@ -1,6 +1,6 @@
 # Pronóstico Mundialista
 
-Aplicación de pronósticos del Mundial del ecosistema [Closer Click](https://seyacat.github.io/closerclick/): predice resultados de los partidos, compite con tus amigos y lleva tu tabla de aciertos. Como toda app del ecosistema, corre del lado del cliente y tú controlas tu información.
+Aplicación de pronósticos del Mundial del ecosistema [Closer Click](https://closerclick.github.io/closerclick/): predice resultados de los partidos, compite con tus amigos y lleva tu tabla de aciertos. Como toda app del ecosistema, corre del lado del cliente y tú controlas tu información.
 
 ## Filosofía
 
