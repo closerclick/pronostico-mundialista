@@ -44,7 +44,9 @@ const sealedActive = computed(() => props.room.sealedUntil > Date.now())
 const sealedDate = computed(() => new Date(props.room.sealedUntil).toLocaleString())
 
 // Reputación de los rivales (registro compartido, ponderada por mi web-of-trust).
-const repByPubkey = ref<Record<string, number | null>>({})
+// Guardamos confianza y afinidad (dos ejes independientes).
+type Rep = { confianza: number | null; afinidad: number | null }
+const repByPubkey = ref<Record<string, Rep>>({})
 async function loadReps () {
   const rep = await getReputation()
   if (!rep) return
@@ -52,14 +54,16 @@ async function loadReps () {
     if (m.deleted || m.publickey === props.myPubkey || m.publickey in repByPubkey.value) continue
     try {
       const r = await rep.reputationOf(m.publickey)
-      repByPubkey.value = { ...repByPubkey.value, [m.publickey]: r.score }
+      repByPubkey.value = { ...repByPubkey.value, [m.publickey]: {
+        confianza: r.score,
+        afinidad: r.indicators?.afinidad?.score ?? null
+      } }
     } catch { /* sin reputación */ }
   }
 }
-const repPct = (pk: string): number | null => {
-  const s = repByPubkey.value[pk]
-  return s == null ? null : Math.round(s * 100)
-}
+const pct = (v: number | null | undefined): number | null => (v == null ? null : Math.round(v * 100))
+const repPct = (pk: string): number | null => pct(repByPubkey.value[pk]?.confianza)
+const afinPct = (pk: string): number | null => pct(repByPubkey.value[pk]?.afinidad)
 onMounted(loadReps)
 watch(() => props.room.members.map((m) => m.publickey).join(), loadReps)
 </script>
@@ -89,7 +93,8 @@ watch(() => props.room.members.map((m) => m.publickey).join(), loadReps)
             <span class="vrow">
               <span class="badge" :class="{ ok: r.member.verified }">{{ r.member.verified ? '✓' : '⚠' }}</span>
               <span class="mono">{{ shortKey(r.member.publickey) }}</span>
-              <span v-if="!r.isMe && repPct(r.member.publickey) != null" class="rep" title="Reputación ponderada por tu web-of-trust">{{ repPct(r.member.publickey) }}%</span>
+              <span v-if="!r.isMe && repPct(r.member.publickey) != null" class="rep" title="Confianza (ponderada por tu web-of-trust)">{{ repPct(r.member.publickey) }}%</span>
+              <span v-if="!r.isMe && afinPct(r.member.publickey) != null" class="rep afin" title="Afinidad de tu red">♥{{ afinPct(r.member.publickey) }}%</span>
             </span>
           </td>
           <td class="num">
@@ -121,6 +126,7 @@ watch(() => props.room.members.map((m) => m.publickey).join(), loadReps)
 .badge.ok { color: var(--green); }
 .mono { font-family: monospace; font-size: 0.66rem; color: var(--muted); }
 .rep { font-size: 0.66rem; font-weight: 700; color: var(--green); background: rgba(0,0,0,.18); border-radius: 4px; padding: 0 0.25rem; }
+.rep.afin { color: #ff7aa8; }
 .me { background: rgba(65, 180, 255, 0.06); }
 .lock { opacity: 0.7; }
 </style>
