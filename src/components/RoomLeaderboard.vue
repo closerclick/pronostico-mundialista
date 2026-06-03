@@ -7,8 +7,11 @@ import type { SavedPrediction } from '../lib/store'
 import { scoreEntry } from '../lib/scoring'
 import { shortKey } from '../lib/rating'
 import { getReputation } from '../lib/reputation'
+import { getIdentity } from '../lib/identity'
+import { createVaultProfileProvider } from '@closerclick/closer-click-profile'
+import '@closerclick/closer-click-profile'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 const props = defineProps<{
   room: Room
@@ -66,6 +69,45 @@ const repPct = (pk: string): number | null => pct(repByPubkey.value[pk]?.confian
 const afinPct = (pk: string): number | null => pct(repByPubkey.value[pk]?.afinidad)
 onMounted(loadReps)
 watch(() => props.room.members.map((m) => m.publickey).join(), loadReps)
+
+// --- Perfil del rival: tarjeta compartida <closer-click-profile> ---
+const profilePk = ref<string | null>(null)
+const profileName = ref('')
+let _provider: any = null
+async function ensureProvider () {
+  if (_provider) return _provider
+  const [identity, reputation] = await Promise.all([getIdentity(), getReputation()])
+  if (reputation) _provider = createVaultProfileProvider({ identity, reputation })
+  return _provider
+}
+function openProfile (m: RoomMember) {
+  if (m.publickey === props.myPubkey) return
+  profileName.value = m.nickname || ''
+  profilePk.value = m.publickey
+}
+function bindProfile (el: any) {
+  if (!el) return
+  ensureProvider().then((p) => { if (p) el.provider = p })
+}
+function onProfileRate () { repByPubkey.value = {}; loadReps() }
+// Tema oscuro del pronosticador (azure/gold sobre panel).
+const profileTheme: Record<string, string> = {
+  '--ccp-bg': 'var(--panel)',
+  '--ccp-bg-2': 'var(--panel-2)',
+  '--ccp-bg-3': 'var(--panel-2)',
+  '--ccp-bg-4': 'rgba(233, 242, 255, 0.18)',
+  '--ccp-border': 'var(--line)',
+  '--ccp-text': 'var(--text)',
+  '--ccp-muted': 'var(--muted)',
+  '--ccp-accent': 'var(--azure)',
+  '--ccp-accent-2': 'var(--azure-dim)',
+  '--ccp-gold': 'var(--gold)',
+  '--ccp-derived': 'var(--gold)',
+  '--ccp-online': 'var(--azure)',
+  '--ccp-affinity': '#ff7aa8',
+  '--ccp-input-bg': 'var(--panel-2)',
+  '--ccp-radius': '12px',
+}
 </script>
 
 <template>
@@ -86,7 +128,9 @@ watch(() => props.room.members.map((m) => m.publickey).join(), loadReps)
         <tr v-for="(r, i) in rows" :key="r.member.publickey" :class="{ me: r.isMe }">
           <td class="pos">{{ r.sealed ? '–' : i + 1 }}</td>
           <td class="who">
-            <span class="nm">
+            <span class="nm" :class="{ clickable: !r.isMe }"
+                  @click="!r.isMe && openProfile(r.member)"
+                  :title="!r.isMe ? t('rooms.member') : undefined">
               {{ r.member.nickname || t('common.anonymous') }}
               <span v-if="r.isMe" class="you">{{ t('rooms.you') }}</span>
             </span>
@@ -104,6 +148,19 @@ watch(() => props.room.members.map((m) => m.publickey).join(), loadReps)
         </tr>
       </tbody>
     </table>
+
+    <closer-click-profile
+      v-if="profilePk"
+      :ref="bindProfile"
+      modal
+      mode="edit"
+      :style="profileTheme"
+      :lang="locale"
+      :pubkey="profilePk"
+      :name="profileName"
+      @cc-profile-close="profilePk = null"
+      @cc-profile-rate="onProfileRate"
+    ></closer-click-profile>
   </div>
 </template>
 
@@ -120,6 +177,8 @@ watch(() => props.room.members.map((m) => m.publickey).join(), loadReps)
 .num strong { color: var(--azure); font-size: 1.05rem; }
 .who { min-width: 0; }
 .nm { font-weight: 700; font-size: 0.9rem; display: flex; align-items: center; gap: 0.4rem; }
+.nm.clickable { cursor: pointer; }
+.nm.clickable:hover { color: var(--azure); text-decoration: underline; }
 .you { font-size: 0.65rem; background: var(--azure); color: #042038; border-radius: 5px; padding: 0 0.3rem; font-weight: 800; }
 .vrow { display: flex; align-items: center; gap: 0.35rem; margin-top: 0.1rem; }
 .badge { font-size: 0.7rem; color: #e0a; }

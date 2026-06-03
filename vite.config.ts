@@ -9,7 +9,7 @@ export default defineConfig(({ command }) => ({
     vue({
       template: {
         compilerOptions: {
-          isCustomElement: (tag) => tag === 'closer-click-support',
+          isCustomElement: (tag) => tag.startsWith('closer-click-'),
         },
       },
     }),
