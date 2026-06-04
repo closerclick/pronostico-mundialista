@@ -17,6 +17,10 @@ const items = computed<ThirdItem[]>({
   get: () => props.pred.draftThirdsRank.map((g) => ({ group: g, teamId: props.pred.draftGroupOrder[g]![2]! })),
   set: (list: ThirdItem[]) => { props.pred.draftThirdsRank = list.map((i) => i.group) },
 })
+
+// En mobile (puntero grueso) el drag arranca SOLO desde el grip de los 9 puntos,
+// para no robarle el gesto al scroll. En desktop, arrastra desde cualquier punto.
+const dragHandle = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches ? '.drag' : undefined
 </script>
 
 <template>
@@ -33,6 +37,7 @@ const items = computed<ThirdItem[]>({
       :animation="160"
       ghost-class="ghost"
       :disabled="readonly"
+      :handle="dragHandle"
       class="thirds-list"
     >
       <template #item="{ element, index }">
@@ -74,6 +79,10 @@ const items = computed<ThirdItem[]>({
 .name { flex: 1; font-size: 0.95rem; }
 .grp { font-size: 0.75rem; color: var(--muted); }
 .drag { cursor: grab; color: var(--muted); padding: 0 0.2rem; touch-action: none; user-select: none; }
+@media (pointer: coarse) {
+  /* En mobile el grip es el único punto de arrastre: tap target más amplio. */
+  .drag { padding: 0.35rem 0.55rem; margin: -0.35rem -0.2rem; font-size: 1.1rem; }
+}
 .ghost { opacity: 0.5; background: var(--panel-2); }
 /* Línea de corte tras la 8ª fila */
 .thirds-list :deep(.third-row:nth-child(8)) { border-bottom: 2px dashed var(--gold); }

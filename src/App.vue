@@ -801,8 +801,10 @@ onUnmounted(() => {
     />
     <div class="main">
     <header class="scoreboard">
-      <closer-click-back class="cc-back"></closer-click-back>
       <button class="menu" data-testid="menu-btn" @click="sidebarOpen = true" :aria-label="t('header.menu')">☰</button>
+      <!-- En móvil el chevron va a la izquierda del logo; en web vive en el
+           sidebar, junto a "Pronósticos" (ver Sidebar.vue). -->
+      <closer-click-back class="cc-back cc-back-sc"></closer-click-back>
       <img src="/favicon.svg" :alt="t('header.logo')" class="brand-logo" />
       <div class="title">
         <span class="cup">{{ t('header.cup') }}</span>
@@ -1114,6 +1116,8 @@ onUnmounted(() => {
   .shell { display: flex; align-items: stretch; height: 100vh; overflow: hidden; }
   .main { flex: 1; height: 100vh; min-height: 0; display: flex; flex-direction: column; }
   .menu { display: none; }
+  /* En web el chevron vive en el sidebar (junto a "Pronósticos"), no en el header. */
+  .cc-back-sc { display: none; }
   .scoreboard { padding-left: 1.2rem; }
 
   /* El contenido scrollea internamente (grupos+terceros o llaves completas). */

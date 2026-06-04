@@ -88,6 +88,10 @@ const scores = computed<Record<string, number>>(() => {
     <div class="scrim" @click="emit('close')"></div>
     <aside class="drawer">
       <header class="dh">
+        <!-- En web el chevron de volver vive aquí, junto al título "Pronósticos".
+             En móvil el sidebar es un cajón, así que el chevron va en el header
+             (App.vue) y este se oculta. -->
+        <closer-click-back class="cc-back-sb"></closer-click-back>
         <span>{{ section === 'rooms' ? t('rooms.title') : t('sidebar.title') }}</span>
         <button class="x" @click="emit('close')" :aria-label="t('common.close')">×</button>
       </header>
@@ -360,5 +364,11 @@ const scores = computed<Record<string, number>>(() => {
     box-shadow: none; border-right: 1px solid var(--line); overflow-y: auto;
   }
   .dh .x { display: none; }
+  /* Chevron + título "Pronósticos" juntos a la izquierda en web. */
+  .dh { justify-content: flex-start; gap: 0.5rem; }
 }
+
+/* Chevron de volver del sidebar (solo web; en móvil va en el header de App.vue). */
+.cc-back-sb { color: var(--text, #fff); --cc-back-size: 32px; margin-left: -4px; }
+@media (max-width: 959px) { .cc-back-sb { display: none; } }
 </style>

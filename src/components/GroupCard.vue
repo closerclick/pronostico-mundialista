@@ -17,6 +17,10 @@ const teams = computed<Team[]>({
 })
 
 const POS = ['1º', '2º', '3º', '4º']
+
+// En mobile (puntero grueso) el drag arranca SOLO desde el grip de los 9 puntos,
+// para no robarle el gesto al scroll. En desktop, arrastra desde cualquier punto.
+const dragHandle = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches ? '.drag' : undefined
 </script>
 
 <template>
@@ -28,6 +32,7 @@ const POS = ['1º', '2º', '3º', '4º']
       :animation="160"
       ghost-class="ghost"
       :disabled="readonly"
+      :handle="dragHandle"
       class="team-list"
     >
       <template #item="{ element, index }">
@@ -75,5 +80,9 @@ const POS = ['1º', '2º', '3º', '4º']
 .name { flex: 1; font-size: 0.95rem; }
 .drag { cursor: grab; color: var(--muted); padding: 0 0.2rem; touch-action: none; user-select: none; }
 .drag:active { cursor: grabbing; }
+@media (pointer: coarse) {
+  /* En mobile el grip es el único punto de arrastre: tap target más amplio. */
+  .drag { padding: 0.35rem 0.55rem; margin: -0.35rem -0.2rem; font-size: 1.1rem; }
+}
 .ghost { opacity: 0.5; background: var(--panel-2); }
 </style>
