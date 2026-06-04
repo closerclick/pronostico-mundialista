@@ -3,11 +3,14 @@ import { ref, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { PeerInfo } from '@closerclick/closer-click-identity'
 import { getIdentity, type IdentityInstance } from '../lib/identity'
+import { getReputation } from '../lib/reputation'
 import { buildTrustMap, computeDerivedRating, shortKey } from '../lib/rating'
 import { resolveTokenToIdentity, ProxyTokenError } from '../lib/proxy'
 import { useNotifications } from '../lib/notifications'
+import { createVaultProfileProvider } from '@closerclick/closer-click-profile'
+import '@closerclick/closer-click-profile'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 const notif = useNotifications()
 async function toggleNotif () {
@@ -24,8 +27,7 @@ const tab = ref<Tab>('perfil')
 const id = ref<IdentityInstance | null>(null)
 const unreachable = ref(false)
 const myNick = ref('')
-const nickDraft = ref('')
-const savingNick = ref(false)
+const myPubkey = computed(() => id.value?.me?.publickey ?? null)
 
 const contacts = ref<PeerInfo[]>([])
 const peers = ref<PeerInfo[]>([])
@@ -43,13 +45,58 @@ const ranking = computed(() =>
     .sort((a, b) => (b.r.value ?? 0) - (a.r.value ?? 0)),
 )
 
+// Provider compartido del ecosistema para <closer-click-profile> (vault + registro
+// de reputación). Mismo que usan el resto de apps; no se reimplementa la tarjeta.
+let _provider: any = null
+async function ensureProvider () {
+  if (_provider) return _provider
+  const [identity, reputation] = await Promise.all([getIdentity(), getReputation()])
+  if (reputation) _provider = createVaultProfileProvider({ identity, reputation })
+  return _provider
+}
+function bindProfile (el: any) {
+  if (!el) return
+  ensureProvider().then((p) => { if (p) el.provider = p })
+}
+// Tema oscuro del pronosticador (azure/gold sobre panel) para el Web Component.
+const profileTheme: Record<string, string> = {
+  '--ccp-bg': 'var(--panel)',
+  '--ccp-bg-2': 'var(--panel-2)',
+  '--ccp-bg-3': 'var(--panel-2)',
+  '--ccp-bg-4': 'rgba(233, 242, 255, 0.18)',
+  '--ccp-border': 'var(--line)',
+  '--ccp-text': 'var(--text)',
+  '--ccp-muted': 'var(--muted)',
+  '--ccp-accent': 'var(--azure)',
+  '--ccp-accent-2': 'var(--azure-dim)',
+  '--ccp-gold': 'var(--gold)',
+  '--ccp-derived': 'var(--gold)',
+  '--ccp-online': 'var(--azure)',
+  '--ccp-affinity': '#ff7aa8',
+  '--ccp-input-bg': 'var(--panel-2)',
+  '--ccp-radius': '12px',
+}
+
+// Perfil de un peer (contacto o ranking): tarjeta compartida en modo edición
+// (permite calificarlo). Al guardar, refrescamos para recomputar el ranking.
+const peerPk = ref<string | null>(null)
+const peerName = ref('')
+function openPeerProfile (pk: string, name?: string | null) {
+  if (!pk || pk === myPubkey.value) return
+  peerName.value = name || ''
+  peerPk.value = pk
+}
+function onPeerRate () { refresh() }
+
+// Mi nombre lo guarda el propio Web Component (mode="self") en el vault.
+function onMyName (e: any) { const n = e?.detail?.name; if (typeof n === 'string') { myNick.value = n; emit('changed') } }
+
 async function load () {
   const inst = await getIdentity()
   id.value = inst
   if (!inst) { unreachable.value = true; return }
   unreachable.value = false
   myNick.value = inst.me?.nickname ?? ''
-  nickDraft.value = myNick.value
   // Si se exige apodo (para compartir), abrimos en Perfil.
   if (props.requireNick) tab.value = 'perfil'
   await refresh()
@@ -82,16 +129,6 @@ async function refresh () {
 }
 
 watch(() => props.open, (o) => { if (o) load() })
-
-async function saveNick () {
-  if (!id.value || !nickDraft.value.trim()) return
-  savingNick.value = true
-  try {
-    await id.value.setMyNickname(nickDraft.value.trim())
-    myNick.value = nickDraft.value.trim()
-    emit('changed')
-  } finally { savingNick.value = false }
-}
 
 async function addContact () {
   addError.value = ''
@@ -163,14 +200,6 @@ async function removeContact (pk: string) {
   await id.value.removeContact(pk)
   await refresh(); emit('changed')
 }
-
-async function rate (pk: string, n: number) {
-  if (!id.value) return
-  await id.value.setRating(pk, n, '')
-  await refresh(); emit('changed')
-}
-
-function myRatingOf (p: PeerInfo): number { return p.myRating?.rating ?? 0 }
 </script>
 
 <template>
@@ -189,16 +218,21 @@ function myRatingOf (p: PeerInfo): number { return p.myRating?.rating ?? 0 }
         <template #vault><code>id.closer.click</code></template>
       </i18n-t>
 
-      <!-- PERFIL -->
+      <!-- PERFIL: tarjeta compartida del ecosistema en modo self (nombre editable
+           guardado en el vault + mi reputación). Las notificaciones push son
+           propias de esta app y van debajo. -->
       <section v-show="tab === 'perfil'" class="body">
         <p v-if="requireNick && !myNick" class="focus-note">{{ t('identity.requireNickShare') }}</p>
-        <label class="lbl">{{ t('identity.nickLabel') }}</label>
-        <div class="row">
-          <input v-model="nickDraft" maxlength="40" :placeholder="t('identity.nickPlaceholder')" @keydown.stop />
-          <button class="go" :disabled="savingNick || nickDraft.trim() === myNick" @click="saveNick">
-            {{ savingNick ? '…' : t('common.save') }}
-          </button>
-        </div>
+        <closer-click-profile
+          v-if="!unreachable && myPubkey"
+          :ref="bindProfile"
+          mode="self"
+          :style="profileTheme"
+          :lang="locale"
+          :pubkey="myPubkey"
+          :name="myNick"
+          @cc-profile-name="onMyName"
+        ></closer-click-profile>
         <p class="hint">{{ t('identity.nickHint') }}</p>
 
         <!-- Notificaciones push -->
@@ -245,20 +279,11 @@ function myRatingOf (p: PeerInfo): number { return p.myRating?.rating ?? 0 }
         </div>
         <p v-if="!contacts.length" class="empty">{{ t('identity.noContacts') }}</p>
         <div v-for="c in contacts" :key="c.publickey" class="contact">
-          <div class="ci">
+          <button class="ci ci-btn" @click="openPeerProfile(c.publickey, c.nickname)" :title="t('rooms.member')">
             <span class="nm">{{ c.nickname || t('identity.noNick') }}</span>
             <span class="mono sm">{{ shortKey(c.publickey) }}</span>
-          </div>
-          <div class="stars">
-            <button
-              v-for="n in 5"
-              :key="n"
-              class="star"
-              :class="{ on: n <= myRatingOf(c) }"
-              @click="rate(c.publickey, n === myRatingOf(c) ? 0 : n)"
-            >★</button>
-          </div>
-          <button class="del" :title="t('common.delete')" @click="removeContact(c.publickey)">🗑</button>
+          </button>
+          <button class="del" :title="t('common.delete')" @click.stop="removeContact(c.publickey)">🗑</button>
         </div>
       </section>
 
@@ -266,7 +291,8 @@ function myRatingOf (p: PeerInfo): number { return p.myRating?.rating ?? 0 }
       <section v-show="tab === 'rankings'" class="body">
         <p class="hint">{{ t('identity.rankingsHint') }}</p>
         <p v-if="!ranking.length" class="empty">{{ t('identity.noRatings') }}</p>
-        <div v-for="(x, i) in ranking" :key="x.peer.publickey" class="rank-row">
+        <button v-for="(x, i) in ranking" :key="x.peer.publickey" class="rank-row"
+                @click="openPeerProfile(x.peer.publickey, x.peer.nickname)" :title="t('rooms.member')">
           <span class="pos">{{ i + 1 }}</span>
           <div class="ci">
             <span class="nm">{{ x.peer.nickname || t('identity.anon') }}</span>
@@ -276,9 +302,24 @@ function myRatingOf (p: PeerInfo): number { return p.myRating?.rating ?? 0 }
             {{ x.r.value!.toFixed(1) }} <span class="star on">★</span>
             <small>{{ x.r.source === 'mine' ? t('identity.sourceMine') : `×${x.r.count}` }}</small>
           </span>
-        </div>
+        </button>
       </section>
     </div>
+
+    <!-- Perfil de un peer (contacto / ranking): tarjeta compartida del ecosistema
+         en modo edición (calificar). Reemplaza la calificación a mano. -->
+    <closer-click-profile
+      v-if="peerPk"
+      :ref="bindProfile"
+      modal
+      mode="edit"
+      :style="profileTheme"
+      :lang="locale"
+      :pubkey="peerPk"
+      :name="peerName"
+      @cc-profile-close="peerPk = null"
+      @cc-profile-rate="onPeerRate"
+    ></closer-click-profile>
   </div>
 </template>
 
@@ -304,8 +345,7 @@ h3 { color: var(--azure); margin-bottom: 0.8rem; }
 .body { overflow-y: auto; }
 
 .lbl { display: block; font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin: 0.6rem 0 0.3rem; }
-.row { display: flex; gap: 0.4rem; }
-.row input, .add input, .add textarea {
+.add input, .add textarea {
   width: 100%; background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
   color: var(--text); padding: 0.5rem; font-size: 0.85rem; font-family: inherit;
 }
@@ -317,13 +357,8 @@ h3 { color: var(--azure); margin-bottom: 0.8rem; }
 }
 .add .go { width: 100%; padding: 0.55rem; margin-top: 0.4rem; }
 .go:disabled { opacity: 0.5; cursor: default; }
-.key-box {
-  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
-  background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 0.5rem 0.7rem; cursor: pointer;
-}
 .mono { font-family: monospace; font-size: 0.82rem; }
 .mono.sm { font-size: 0.68rem; color: var(--muted); }
-.copy { font-size: 0.75rem; color: var(--azure); }
 .hint { font-size: 0.78rem; color: var(--muted); margin-top: 0.5rem; }
 .focus-note {
   font-size: 0.8rem; color: var(--azure); background: rgba(65, 180, 255, 0.1);
@@ -337,11 +372,12 @@ h3 { color: var(--azure); margin-bottom: 0.8rem; }
 .contact, .rank-row {
   display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0; border-top: 1px solid var(--line-soft);
 }
+.rank-row { width: 100%; background: none; border-left: none; border-right: none; border-bottom: none; cursor: pointer; text-align: left; }
+.rank-row:hover .nm, .ci-btn:hover .nm { color: var(--azure); }
 .ci { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ci-btn { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; background: none; border: none; padding: 0; cursor: pointer; text-align: left; }
 .nm { font-weight: 700; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.stars { display: flex; }
-.star { background: none; border: none; cursor: pointer; color: rgba(255,255,255,0.22); font-size: 1rem; padding: 0 1px; }
-.star.on { color: var(--gold); }
+.star { color: var(--gold); font-size: 1rem; }
 .del { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 0.9rem; }
 .del:hover { color: #ff6b6b; }
 .pos { width: 1.4rem; text-align: center; font-family: var(--font-display); color: var(--muted); }
