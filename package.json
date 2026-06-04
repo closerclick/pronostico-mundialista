@@ -20,7 +20,7 @@
     "@closerclick/closer-click-profile": "0.2.1",
     "@closerclick/closer-click-proxy-client": "^0.6.0",
     "@closerclick/closer-click-reputation": "^0.3.0",
-    "@closerclick/closer-click-share": "0.1.0",
+    "@closerclick/closer-click-share": "0.2.0",
     "@closerclick/closer-click-store": "^0.3.0",
     "@closerclick/closer-click-support": "^0.3.8",
     "html2canvas": "^1.4.1",
