@@ -72,6 +72,7 @@ const es = {
   confirm: {
     msg: '⚠ Las llaves aún no reflejan el nuevo orden de posiciones.',
     btn: 'Confirmar cambios (afecta las llaves)',
+    cancel: 'Cancelar cambios',
   },
   tabSwitch: {
     title: 'Cambios sin aplicar',
@@ -429,6 +430,7 @@ const en: typeof es = {
   confirm: {
     msg: '⚠ The bracket does not yet reflect the new standings order.',
     btn: 'Confirm changes (affects the bracket)',
+    cancel: 'Cancel changes',
   },
   tabSwitch: {
     title: 'Unapplied changes',

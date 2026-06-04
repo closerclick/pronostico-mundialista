@@ -72,6 +72,20 @@ export function confirmStandings (p: Prediction): boolean {
 }
 
 /**
+ * Descarta los cambios en borrador: vuelve el orden arrastrado al último
+ * confirmado (lo opuesto a `confirmStandings`). Devuelve true si revirtió algo.
+ */
+export function revertDraft (p: Prediction): boolean {
+  const changed = JSON.stringify(p.draftGroupOrder) !== JSON.stringify(p.groupOrder) ||
+    JSON.stringify(p.draftThirdsRank) !== JSON.stringify(p.thirdsRank)
+  if (changed) {
+    p.draftGroupOrder = p.groupOrder.map((g) => [...g])
+    p.draftThirdsRank = [...p.thirdsRank]
+  }
+  return changed
+}
+
+/**
  * Posiciones "en borrador" que aún no se aplican a las llaves:
  *   - 'manual': lo que el usuario arrastra (draftGroupOrder/draftThirdsRank).
  *   - winlose/score: lo calculado desde los resultados cargados.
@@ -81,11 +95,48 @@ export function draftStandings (p: Prediction): { groupOrder: number[][]; thirds
   return computeStandings(p.results, p.mode)
 }
 
-/** ¿Hay cambios sin confirmar (el borrador difiere de lo confirmado)? */
+/**
+ * "Huella" de las posiciones que SÍ alimentan las llaves: el 1.º y 2.º de cada
+ * grupo (cupos W/RU) y los terceros que clasifican según su asignación a slots.
+ * El 4.º de cada grupo y los terceros que no clasifican NO entran a las llaves,
+ * así que reordenarlos no cambia esta huella.
+ */
+function bracketSignature (groupOrder: number[][], thirdsRank: number[]): string {
+  const winners = groupOrder.map((g) => g[0])
+  const runners = groupOrder.map((g) => g[1])
+  const thirds = allocateThirds(thirdsRank.slice(0, 8))
+    .map((group) => (group == null ? null : groupOrder[group]![2]!))
+  return JSON.stringify([winners, runners, thirds])
+}
+
+/**
+ * ¿Hay cambios sin confirmar que AFECTAN las llaves? Solo cuenta como pendiente
+ * lo que cambia la huella del bracket; los reordenamientos que no tocan las
+ * llaves (p. ej. 4.º puesto, o terceros que no clasifican) se consideran ya
+ * confirmados (ver `autoConfirmNonBracket`).
+ */
 export function hasPendingChanges (p: Prediction): boolean {
   const next = draftStandings(p)
-  return JSON.stringify(next.groupOrder) !== JSON.stringify(p.groupOrder) ||
+  return bracketSignature(next.groupOrder, next.thirdsRank) !==
+    bracketSignature(p.groupOrder, p.thirdsRank)
+}
+
+/**
+ * Aplica al confirmado (silenciosamente) los cambios del borrador que NO afectan
+ * las llaves, para que queden "confirmados" sin pedir confirmación. No poda picks
+ * porque la huella del bracket es idéntica (los mismos equipos siguen presentes).
+ * Devuelve true si sincronizó algo.
+ */
+export function autoConfirmNonBracket (p: Prediction): boolean {
+  const next = draftStandings(p)
+  const rawChanged = JSON.stringify(next.groupOrder) !== JSON.stringify(p.groupOrder) ||
     JSON.stringify(next.thirdsRank) !== JSON.stringify(p.thirdsRank)
+  if (!rawChanged) return false
+  if (bracketSignature(next.groupOrder, next.thirdsRank) !==
+      bracketSignature(p.groupOrder, p.thirdsRank)) return false
+  p.groupOrder = next.groupOrder.map((g) => [...g])
+  p.thirdsRank = [...next.thirdsRank]
+  return true
 }
 
 // Tercer equipo de un grupo según las posiciones confirmadas (para terceros).

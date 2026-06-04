@@ -5,7 +5,7 @@ import { setLocale, type Locale } from './i18n'
 import { GROUPS, teamById } from './lib/teams'
 import {
   defaultPrediction, clonePrediction, champion, prunePicks,
-  confirmStandings, hasPendingChanges, completeness, type Prediction,
+  confirmStandings, revertDraft, autoConfirmNonBracket, hasPendingChanges, completeness, type Prediction,
 } from './lib/prediction'
 import type { GameMode } from './lib/standings'
 import { encodePrediction, decodePrediction } from './lib/codec'
@@ -79,36 +79,9 @@ watch(section, (s) => {
 })
 
 // --- Instalación PWA --------------------------------------------------------
-let deferredPrompt: { prompt: () => void; userChoice: Promise<unknown> } | null = null
-const isStandalone = ref(
-  window.matchMedia('(display-mode: standalone)').matches ||
-  (navigator as unknown as { standalone?: boolean }).standalone === true,
-)
-const canInstall = ref(false)
-const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) &&
-  !(window as unknown as { MSStream?: unknown }).MSStream
-
-function onBeforeInstallPrompt (e: Event) {
-  e.preventDefault()
-  deferredPrompt = e as unknown as typeof deferredPrompt
-  canInstall.value = true
-}
-function onAppInstalled () {
-  deferredPrompt = null
-  canInstall.value = false
-  isStandalone.value = true
-}
-async function installApp () {
-  if (deferredPrompt) {
-    deferredPrompt.prompt()
-    await deferredPrompt.userChoice
-    deferredPrompt = null
-    canInstall.value = false
-    return
-  }
-  if (isIOS) alert(t('install.ios'))
-  else alert(t('install.other'))
-}
+// El botón "Instalar App" lo aporta el Web Component <closer-click-install>
+// (@closerclick/closer-click-install): captura beforeinstallprompt, maneja iOS
+// con su propio modal (sin alert) y se auto-oculta si ya está instalada.
 
 let loading = false // evita persistir mientras cargamos un pronóstico
 
@@ -135,6 +108,12 @@ const pending = computed(() => hasPendingChanges(pred))
 function confirmChanges () {
   if (readonly.value) return
   confirmStandings(pred) // persiste vía el watch profundo de `pred`
+}
+
+// Descarta el reordenamiento en borrador y vuelve a las posiciones confirmadas.
+function cancelChanges () {
+  if (readonly.value) return
+  revertDraft(pred) // persiste vía el watch profundo de `pred`
 }
 
 // Cambio de pestaña con guarda: si hay cambios sin aplicar (afectan las llaves),
@@ -435,7 +414,12 @@ function persistActive () {
   saveLibrary(library.value)
 }
 
-watch(pred, () => { if (!loading) persistActive() }, { deep: true })
+watch(pred, () => {
+  if (loading) return
+  // Los reordenamientos que no afectan las llaves se confirman solos (no nag).
+  if (!readonly.value) autoConfirmNonBracket(pred)
+  persistActive()
+}, { deep: true })
 
 function select (id: string) {
   const entry = library.value.find((p) => p.id === id)
@@ -727,8 +711,6 @@ async function startInbox () {
 }
 
 onMounted(async () => {
-  window.addEventListener('beforeinstallprompt', onBeforeInstallPrompt)
-  window.addEventListener('appinstalled', onAppInstalled)
   window.addEventListener('hashchange', onHashChange)
 
   library.value = loadLibrary()
@@ -769,8 +751,6 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  window.removeEventListener('beforeinstallprompt', onBeforeInstallPrompt)
-  window.removeEventListener('appinstalled', onAppInstalled)
   window.removeEventListener('hashchange', onHashChange)
   inbox?.stop()
   stopSync()
@@ -874,7 +854,7 @@ onUnmounted(() => {
         🏆 {{ teamById(championId).flag }} {{ teamById(championId).code }}
       </span>
 
-      <button v-if="!isStandalone" class="install-inline" data-testid="install-btn" @click="installApp">{{ t('active.install') }}</button>
+      <closer-click-install class="cc-install" :lang="locale" data-testid="install-btn"></closer-click-install>
 
       <!-- Acciones del pronóstico ACTIVO (alineadas a la derecha) -->
       <div v-if="activeId" class="bar-actions" data-testid="bar-actions">
@@ -908,7 +888,10 @@ onUnmounted(() => {
     <!-- Franja de confirmación: visible cuando hay resultados sin aplicar. -->
     <div v-if="!readonly && !isOfficial && pending" class="confirm-bar" data-testid="confirm-bar">
       <span class="confirm-msg">{{ t('confirm.msg') }}</span>
-      <button class="confirm-btn" data-testid="confirm-btn" @click="confirmChanges">{{ t('confirm.btn') }}</button>
+      <div class="confirm-actions">
+        <button class="confirm-btn" data-testid="confirm-btn" @click="confirmChanges">{{ t('confirm.btn') }}</button>
+        <button v-if="pred.mode === 'manual'" class="cancel-btn" data-testid="cancel-btn" @click="cancelChanges">{{ t('confirm.cancel') }}</button>
+      </div>
     </div>
 
     <nav class="tabs">
@@ -1152,12 +1135,23 @@ onUnmounted(() => {
 }
 .identity-btn:hover { background: rgba(65, 180, 255, 0.22); }
 /* Botón "Instalar App" en el flujo de la barra, centrado (no flota, no tapa). */
-.install-inline {
-  margin-left: auto; background: var(--azure); color: #042038; border: none;
-  border-radius: 50px; padding: 0.28rem 0.85rem; font-weight: 800; font-size: 0.82rem;
-  cursor: pointer; white-space: nowrap; flex-shrink: 0;
+/* Botón "Instalar App" (Web Component <closer-click-install>): reusa el look del
+   antiguo .install-inline vía custom properties + ::part(button). */
+.cc-install {
+  margin-left: auto; flex-shrink: 0;
+  --cc-install-color: #042038;
+  --cc-install-bg-hover: var(--azure);
+  --cc-install-radius: 50px;
+  --cc-install-font-size: 0.82rem;
+  --cc-install-gap: 6px;
+  --cc-install-icon: 15px;
+  --cc-install-accent: var(--azure);
 }
-.install-inline:hover { filter: brightness(1.06); }
+.cc-install::part(button) {
+  background: var(--azure); color: #042038; border: none;
+  padding: 0.28rem 0.85rem; font-weight: 800; white-space: nowrap;
+}
+.cc-install::part(button):hover { filter: brightness(1.06); }
 
 /* Scoreboard header */
 .scoreboard {
@@ -1293,6 +1287,13 @@ onUnmounted(() => {
   font-size: 0.85rem; white-space: nowrap; box-shadow: 0 4px 16px rgba(255, 207, 63, 0.35);
 }
 .confirm-btn:hover { filter: brightness(1.06); }
+.confirm-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.cancel-btn {
+  background: transparent; color: var(--gold); border: 1px solid var(--gold); border-radius: 50px;
+  padding: 0.5rem 1rem; font-weight: 700; cursor: pointer; font-family: inherit;
+  font-size: 0.85rem; white-space: nowrap;
+}
+.cancel-btn:hover { background: rgba(255, 207, 63, 0.12); }
 
 .tabs { display: flex; gap: 0.4rem; padding: 0.8rem 1rem 0; }
 .tabs button {
