@@ -2,8 +2,14 @@ import { createApp } from 'vue'
 import './style.css'
 import App from './App.vue'
 import '@closerclick/closer-click-support'
+import { createBackNav } from '@closerclick/closer-click-nav'
 import { i18n } from './i18n'
 import { initAnalytics } from './lib/analytics'
+
+// Navegación "volver" unificada del ecosistema (botón físico de Android / gesto
+// de iOS / atrás del navegador / chevron del header → cierra modal/panel; si no
+// hay nada → closer.click).
+createBackNav()
 
 createApp(App).use(i18n).mount('#app')
 

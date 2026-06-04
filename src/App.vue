@@ -10,6 +10,7 @@ import {
 import type { GameMode } from './lib/standings'
 import { encodePrediction, decodePrediction } from './lib/codec'
 import { parseShareFragment, buildShareUrl, getIdentity, SHARE_BASE } from './lib/share'
+import { useBackLayer } from '@closerclick/closer-click-nav/vue'
 import {
   loadLibrary, saveLibrary, getActiveId, setActiveId, genId, hydrateLibrary, type SavedPrediction,
 } from './lib/store'
@@ -51,6 +52,14 @@ const importOpen = ref(false)
 const importText = ref('')
 const importError = ref('')
 const importing = ref(false)
+
+// Volver unificado (@closerclick/closer-click-nav): el botón físico / chevron
+// cierra el panel/modal abierto antes de salir hacia closer.click.
+useBackLayer(sidebarOpen)
+useBackLayer(shareOpen)
+useBackLayer(identityOpen)
+useBackLayer(scoringOpen)
+useBackLayer(importOpen)
 
 // --- Salas (otra "página": barra lateral + contenido propio) ---------------
 const section = ref<'predictions' | 'rooms'>('predictions')
@@ -792,6 +801,7 @@ onUnmounted(() => {
     />
     <div class="main">
     <header class="scoreboard">
+      <closer-click-back class="cc-back"></closer-click-back>
       <button class="menu" data-testid="menu-btn" @click="sidebarOpen = true" :aria-label="t('header.menu')">☰</button>
       <img src="/favicon.svg" :alt="t('header.logo')" class="brand-logo" />
       <div class="title">
@@ -1152,6 +1162,7 @@ onUnmounted(() => {
   backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--line);
 }
+.cc-back { color: var(--text, #fff); --cc-back-size: 40px; flex-shrink: 0; }
 .menu {
   background: rgba(65, 180, 255, 0.12); color: var(--text);
   border: 1px solid var(--line); border-radius: 10px; cursor: pointer;
