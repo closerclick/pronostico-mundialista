@@ -41,7 +41,11 @@ const library = ref<SavedPrediction[]>([])
 const activeId = ref<string | null>(null)
 const pred = reactive<Prediction>(defaultPrediction())
 const tab = ref<'grupos' | 'resultados' | 'llaves' | 'puntajes'>('grupos')
-const sidebarOpen = ref(false)
+// En móvil (cajón) el sidebar arranca ABIERTO para que se vea el menú/lista al
+// entrar; en escritorio es barra fija y este flag no afecta el layout.
+const sidebarOpen = ref(
+  typeof window !== 'undefined' && window.matchMedia('(max-width: 959px)').matches,
+)
 const shareOpen = ref(false)
 const shareEntryId = ref<string | null>(null)
 const identityOpen = ref(false)
@@ -441,7 +445,9 @@ function select (id: string) {
   if (entry.official) { pred.mode = 'score'; tab.value = 'resultados' }
   // La pestaña Resultados no existe en modo Simple: si estaba activa, volvemos a Grupos.
   else if (pred.mode === 'manual' && tab.value === 'resultados') tab.value = 'grupos'
-  sidebarOpen.value = false
+  // Nota: NO cerramos el sidebar aquí. select() corre también al montar
+  // (auto-selección) y queremos que en móvil el cajón arranque ABIERTO. El
+  // cierre al elegir un ítem lo hace el handler @select del cajón.
 }
 
 // Garantiza que exista EXACTAMENTE una entrada de resultados oficiales. Si no
@@ -764,7 +770,7 @@ onUnmounted(() => {
       :library="library"
       :active-id="activeId"
       @close="sidebarOpen = false"
-      @select="select"
+      @select="(id) => { select(id); sidebarOpen = false }"
       @create="typePicker = { action: 'new' }; sidebarOpen = false"
       @import="importOpen = true; sidebarOpen = false"
       @remove="remove"
