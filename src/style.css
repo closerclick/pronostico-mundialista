@@ -16,6 +16,9 @@
   --green: var(--azure);
   --green-d: #102a52;
   --gold: #ffcf3f;
+  /* "Incompleto / falta elegir": celeste brillante que contrasta con el azul
+     oscuro del panel y con las líneas tenues. */
+  --pending: #5fd0ff;
 
   --text: #eaf2ff;
   --chalk: #eaf2ff;

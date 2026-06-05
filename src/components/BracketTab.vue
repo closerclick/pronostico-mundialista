@@ -60,6 +60,20 @@ function side (num: number, top: boolean): SideView {
 function sides (num: number): [SideView, SideView] { return [side(num, true), side(num, false)] }
 function chosen (num: number): number | null { return props.pred.picks[num] ?? null }
 
+// "Incompleto": el cruce todavía no está resuelto. Es incompleto si le falta
+// algún equipo (uno o ambos cupos vacíos, p.ej. "Ganador 74") O si ya tiene sus
+// dos equipos pero aún no se eligió quién avanza (su "hijo" sin seleccionar).
+// Solo queda completo cuando tiene ambos equipos y ganador marcado. En lectura
+// no se resalta.
+function pending (num: number): boolean {
+  if (props.readonly) return false
+  const match = m(num)
+  const home = match?.home ?? null
+  const away = match?.away ?? null
+  if (home == null || away == null) return true
+  return chosen(num) == null
+}
+
 function choose (num: number, teamId: number | null) {
   // Se permite elegir aunque el rival esté vacío (basta con que el cupo tocado
   // tenga equipo).
@@ -135,6 +149,7 @@ function connectorsForCol (nums: number[]): Connector[] {
             :chosen="chosen(num)"
             :clickable="!readonly"
             :scored="scoredKO(num)"
+            :pending="pending(num)"
             @choose="choose(num, $event)"
           />
           <!-- Conectores hacia la columna siguiente (salen por la derecha). -->
@@ -167,6 +182,7 @@ function connectorsForCol (nums: number[]): Connector[] {
           :chosen="chosen(FINAL.num)"
           :clickable="!readonly"
           :scored="scoredKO(FINAL.num)"
+          :pending="pending(FINAL.num)"
           @choose="choose(FINAL.num, $event)"
         />
         <div v-if="championId != null" class="champ-name">
@@ -179,6 +195,7 @@ function connectorsForCol (nums: number[]): Connector[] {
             :chosen="chosen(THIRD_PLACE.num)"
             :clickable="!readonly"
             :scored="scoredKO(THIRD_PLACE.num)"
+            :pending="pending(THIRD_PLACE.num)"
             @choose="choose(THIRD_PLACE.num, $event)"
           />
         </div>
@@ -211,6 +228,7 @@ function connectorsForCol (nums: number[]): Connector[] {
             :chosen="chosen(num)"
             :clickable="!readonly"
             :scored="scoredKO(num)"
+            :pending="pending(num)"
             @choose="choose(num, $event)"
           />
         </div>
