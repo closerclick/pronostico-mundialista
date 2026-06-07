@@ -268,6 +268,7 @@ const es = {
   },
   bracket: {
     hint: 'Dieciseisavos se llenan con los clasificados de grupos. Toca quién avanza (toca de nuevo para vaciar la llave).',
+    bronze: 'Medalla de bronce (3.er puesto)',
     thirdPlace: '3.º puesto',
     r32: 'Dieciseisavos',
     r16: 'Octavos',
@@ -375,6 +376,7 @@ const es = {
     legendDirect: 'Clasifican directo (1.º, 2.º)',
     legendThird: 'Mejor tercero clasificado',
     champion: 'Campeón:',
+    bronze: '3.er puesto:',
     scan: 'Escanea para ver/editar en',
     qrAlt: 'QR del pronóstico',
   },
@@ -641,6 +643,7 @@ const en: typeof es = {
   },
   bracket: {
     hint: 'The round of 32 fills with the group qualifiers. Tap who advances (tap again to clear the tie).',
+    bronze: 'Bronze medal (3rd place)',
     thirdPlace: '3rd place',
     r32: 'Round of 32',
     r16: 'Round of 16',
@@ -746,6 +749,7 @@ const en: typeof es = {
     legendDirect: 'Qualify directly (1st, 2nd)',
     legendThird: 'Best qualified third',
     champion: 'Champion:',
+    bronze: '3rd place:',
     scan: 'Scan to view/edit in',
     qrAlt: 'Prediction QR',
   },

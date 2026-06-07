@@ -96,6 +96,9 @@ const rightCols = [
 ]
 
 const championId = computed(() => m(FINAL.num)?.winner ?? null)
+// Ganador del partido por el 3.er puesto (medalla de bronce). null si aún no se
+// definió (la medalla queda apagada para que se note que falta llenarlo).
+const bronzeId = computed(() => m(THIRD_PLACE.num)?.winner ?? null)
 
 // --- Conectores ("palitos") del bracket ---------------------------------
 // Con `justify-content:space-around`, el centro del partido i (de N) cae en la
@@ -189,6 +192,7 @@ function connectorsForCol (nums: number[]): Connector[] {
           {{ teamById(championId).flag }} {{ teamById(championId).name }}
         </div>
         <div class="third">
+          <span class="medal" :class="{ won: bronzeId != null }" :title="t('bracket.bronze')">🥉</span>
           <span class="col-title">{{ t('bracket.thirdPlace') }}</span>
           <MatchBox
             :sides="sides(THIRD_PLACE.num)"
@@ -198,6 +202,9 @@ function connectorsForCol (nums: number[]): Connector[] {
             :pending="pending(THIRD_PLACE.num)"
             @choose="choose(THIRD_PLACE.num, $event)"
           />
+          <div v-if="bronzeId != null" class="bronze-name">
+            {{ teamById(bronzeId).flag }} {{ teamById(bronzeId).name }}
+          </div>
         </div>
       </div>
 
@@ -314,6 +321,11 @@ function connectorsForCol (nums: number[]): Connector[] {
 .trophy.won { filter: none; text-shadow: 0 0 18px rgba(255, 207, 63, 0.6); }
 .champ-name { color: var(--gold); font-weight: 800; font-size: 0.78rem; text-align: center; }
 .third { margin-top: 0.6rem; }
+/* Medalla de bronce del 3.er puesto: apagada (gris) hasta que se define, igual
+   que el trofeo del campeón, para que se note que falta elegir el ganador. */
+.medal { display: block; font-size: 1.2rem; text-align: center; filter: grayscale(1) opacity(0.4); transition: filter 0.3s; margin-bottom: 0.1rem; }
+.medal.won { filter: none; text-shadow: 0 0 14px rgba(205, 127, 50, 0.6); }
+.bronze-name { color: #cd7f32; font-weight: 800; font-size: 0.74rem; text-align: center; margin-top: 0.2rem; }
 
 @media (min-width: 760px) {
   /* Mismo reparto flexible, solo con más aire y tipografías mayores. */

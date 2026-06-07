@@ -89,6 +89,9 @@ const finalMatch = computed(() => match(FINAL.num))
 const thirdMatch = computed(() => match(THIRD_PLACE.num))
 const championId = computed(() => m(FINAL.num)?.winner ?? null)
 const champion = computed(() => (championId.value != null ? teamById(championId.value) : null))
+// Ganador del 3.er puesto (medalla de bronce), para destacarlo en la hoja.
+const bronzeId = computed(() => m(THIRD_PLACE.num)?.winner ?? null)
+const bronze = computed(() => (bronzeId.value != null ? teamById(bronzeId.value) : null))
 
 // Etiqueta del modo de juego para el encabezado.
 const modeLabel = computed(() => {
@@ -298,7 +301,7 @@ const groupResultViews = computed<GroupResultView[]>(() =>
               {{ t('print.champion') }} <strong>{{ champion.flag }} {{ champion.name }}</strong>
             </div>
             <div class="third">
-              <span class="col-title">{{ t('bracket.thirdPlace') }}</span>
+              <span class="col-title">🥉 {{ t('bracket.thirdPlace') }}</span>
               <div class="mbox">
                 <div class="side" :class="{ picked: thirdMatch.top.picked, empty: !thirdMatch.top.code }">
                   <template v-if="thirdMatch.top.code">
@@ -312,6 +315,9 @@ const groupResultViews = computed<GroupResultView[]>(() =>
                   </template>
                   <span v-else class="ph-lbl">{{ thirdMatch.bottom.label }}</span>
                 </div>
+              </div>
+              <div v-if="bronze" class="bronze">
+                {{ t('print.bronze') }} <strong>{{ bronze.flag }} {{ bronze.name }}</strong>
               </div>
             </div>
           </div>
@@ -473,6 +479,7 @@ h2 {
 .mbox.big .side { min-height: 20px; }
 .champ { font-size: 7pt; text-align: center; color: #07408a; }
 .third { margin-top: 3px; }
+.bronze { font-size: 6.5pt; text-align: center; color: #8a5a07; margin-top: 1px; }
 
 /* Pie con QR grande (sobra espacio en portrait): centrado. */
 .pf {
