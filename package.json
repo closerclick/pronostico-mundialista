@@ -22,7 +22,7 @@
     "@closerclick/closer-click-reputation": "^0.3.0",
     "@closerclick/closer-click-share": "0.3.0",
     "@closerclick/closer-click-store": "^0.3.0",
-    "@closerclick/closer-click-support": "^0.3.8",
+    "@closerclick/closer-click-support": "^0.3.9",
     "@closerclick/closer-click-tutorial": "0.1.0",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
