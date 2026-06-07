@@ -16,7 +16,10 @@ async function createOwnPrediction (page: Page, mode: 'manual' | 'winlose' | 'sc
   if (await menu.isVisible()) await menu.click()
   await page.getByTestId('sb-new').click()
   await page.getByTestId('type-picker').waitFor()
+  // El selector tiene 2 pasos: modo y luego alcance. 'all' (grupos + llaves)
+  // reproduce el pronóstico completo del flujo previo.
   await page.getByTestId('type-' + mode).click()
+  await page.getByTestId('scope-all').click()
 }
 
 test('la app carga y muestra las pestañas Grupos y Llaves', async ({ page }) => {

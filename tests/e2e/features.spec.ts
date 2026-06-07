@@ -10,7 +10,10 @@ async function newPrediction (page: Page, mode: 'manual' | 'winlose' | 'score'):
   if (await menu.isVisible()) await menu.click()
   await page.getByTestId('sb-new').click()
   await page.getByTestId('type-picker').waitFor()
+  // El selector tiene 2 pasos: modo y luego alcance. 'all' (grupos + llaves)
+  // reproduce el pronóstico completo del flujo previo.
   await page.getByTestId('type-' + mode).click()
+  await page.getByTestId('scope-all').click()
 }
 
 test('crear pide el tipo y queda fijo (Completo abre Resultados)', async ({ page }) => {
@@ -26,10 +29,11 @@ test('clonar a otro tipo crea un nuevo pronóstico con ese tipo', async ({ page 
   // En Simple no hay pestaña Resultados.
   await expect(page.getByTestId('tab-resultados')).toHaveCount(0)
 
-  // Clonar a Completo desde las acciones de la barra.
+  // Clonar a Completo desde las acciones de la barra (modo + alcance).
   await page.getByTestId('bar-clone').click()
   await page.getByTestId('type-picker').waitFor()
   await page.getByTestId('type-score').click()
+  await page.getByTestId('scope-all').click()
 
   // El clon (Completo) queda activo: aparece la pestaña Resultados.
   await expect(page.getByTestId('tab-resultados')).toBeVisible()
