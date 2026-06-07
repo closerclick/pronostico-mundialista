@@ -8,7 +8,7 @@
 // reconecta e `identify()` drena la cola cifrada del proxy.
 
 import { ref, computed } from 'vue'
-import { createVaultPushProvider } from '@closerclick/closer-click-notifications'
+import { createVaultPushProvider, createNotifications, type PushProvider } from '@closerclick/closer-click-notifications'
 import { getProxyClient } from './connection'
 import { getIdentity } from './identity'
 
@@ -36,6 +36,27 @@ const provider = createVaultPushProvider({
   identity: () => getIdentity(),
   storageKey: 'mundial',
 }) as unknown as VaultPush
+
+// Controlador de notificaciones LOCALES (permiso + prefs por categoría + disparo),
+// con el provider de push integrado. Lo consumen el motor de acuses (receipts.ts)
+// y el panel de ajustes <closer-click-notifications>. Singleton.
+const controller = createNotifications({
+  storageKey: 'mundial',
+  categories: [
+    {
+      key: 'shareOpened',
+      label: { es: 'Aperturas de lo que compartí', en: 'Opens of what I shared' },
+      hint: {
+        es: 'Avisame cuando alguien abre un pronóstico que compartí.',
+        en: 'Notify me when someone opens a prediction I shared.',
+      },
+    },
+  ],
+  push: provider as unknown as PushProvider,
+})
+
+/** Controlador de notificaciones compartido (singleton). */
+export function getNotificationsController () { return controller }
 
 const enabled = ref(provider.isEnabled())
 const permission = ref<NotificationPermission>(

@@ -63,18 +63,25 @@ export function scoreEntry (entry: SavedPrediction, official: SavedPrediction | 
     return empty
   }
 
+  // El alcance (scope) del pronóstico decide qué categorías puntúan: 'groups'
+  // no tiene llaves; 'bracket' no tiene fase de grupos del usuario (sale de los
+  // resultados oficiales). 'all' puntúa todo.
+  const scope = P.scope ?? 'all'
+
   // --- Posiciones de grupo: +3 SOLO por posiciones oficiales ASEGURADAS. ---
   // Las posiciones oficiales se derivan de los resultados cargados y solo
   // cuentan las que ya son ciertas (no se puntúa lo incierto).
   const oResults: Results = official.results ?? {}
   const oMode = official.mode ?? 'score'
   let posiciones = 0
-  for (let g = 0; g < 12; g++) {
-    const pg = P.groupOrder[g]!
-    const certain = certainGroupOrder(g, oResults, oMode)
-    for (let pos = 0; pos < 4; pos++) {
-      const teamCierto = certain[pos]
-      if (teamCierto != null && pg[pos] === teamCierto) posiciones += SCORING.posicion
+  if (scope !== 'bracket') {
+    for (let g = 0; g < 12; g++) {
+      const pg = P.groupOrder[g]!
+      const certain = certainGroupOrder(g, oResults, oMode)
+      for (let pos = 0; pos < 4; pos++) {
+        const teamCierto = certain[pos]
+        if (teamCierto != null && pg[pos] === teamCierto) posiciones += SCORING.posicion
+      }
     }
   }
 
@@ -83,21 +90,24 @@ export function scoreEntry (entry: SavedPrediction, official: SavedPrediction | 
   // se puntúa. El ganador oficial es el pick registrado (O.picks[num]). ---
   const rp = resolveMatches(P)
   let llaves = 0
-  for (const round of ROUNDS) {
-    for (const m of round.matches) {
-      const wp = rp.get(m.num)?.winner ?? null
-      const wo = O.picks[m.num] ?? null // ganador real registrado en el oficial
-      if (wp != null && wo != null && wp === wo) llaves += round.pts
+  if (scope !== 'groups') {
+    for (const round of ROUNDS) {
+      for (const m of round.matches) {
+        const wp = rp.get(m.num)?.winner ?? null
+        const wo = O.picks[m.num] ?? null // ganador real registrado en el oficial
+        if (wp != null && wo != null && wp === wo) llaves += round.pts
+      }
     }
   }
 
   // --- Resultados (gana/empata/pierde) y marcador exacto de grupo. ---
   // En Medio y Completo se compara el 1/X/2 de cada partido de grupo; en
   // Completo, además, el marcador exacto. Solo cuenta donde el oficial ya tiene
-  // ese resultado (partido jugado).
+  // ese resultado (partido jugado). En scope 'bracket' la fase de grupos no es
+  // del usuario, así que no puntúa.
   let resultados = 0
   let marcadores = 0
-  if (entry.mode === 'winlose' || entry.mode === 'score') {
+  if (scope !== 'bracket' && (entry.mode === 'winlose' || entry.mode === 'score')) {
     const er: Results = entry.results ?? {}
     const or: Results = official.results ?? {}
     for (let g = 0; g < 12; g++) {
@@ -145,34 +155,39 @@ export function scoreDetail (entry: SavedPrediction, official: SavedPrediction |
 
   const oResults: Results = official.results ?? {}
   const oMode = official.mode ?? 'score'
+  const scope = P.scope ?? 'all'
   const detail: ScoreDetail = { positions: [], outcomes: [], exact: [], bracket: [], breakdown: { posiciones: 0, llaves: 0, resultados: 0, marcadores: 0, total: 0 } }
 
-  // Posiciones aseguradas acertadas.
-  for (let g = 0; g < 12; g++) {
-    const pg = P.groupOrder[g]!
-    const certain = certainGroupOrder(g, oResults, oMode)
-    for (let pos = 0; pos < 4; pos++) {
-      const teamCierto = certain[pos]
-      if (teamCierto != null && pg[pos] === teamCierto) {
-        detail.positions.push({ group: g, pos, teamId: teamCierto, points: SCORING.posicion })
+  // Posiciones aseguradas acertadas (no aplican en scope 'bracket').
+  if (scope !== 'bracket') {
+    for (let g = 0; g < 12; g++) {
+      const pg = P.groupOrder[g]!
+      const certain = certainGroupOrder(g, oResults, oMode)
+      for (let pos = 0; pos < 4; pos++) {
+        const teamCierto = certain[pos]
+        if (teamCierto != null && pg[pos] === teamCierto) {
+          detail.positions.push({ group: g, pos, teamId: teamCierto, points: SCORING.posicion })
+        }
       }
     }
   }
 
-  // Llaves acertadas (en partidos ya decididos por el oficial).
+  // Llaves acertadas (en partidos ya decididos por el oficial). No en 'groups'.
   const rp = resolveMatches(P)
-  for (const round of ROUNDS) {
-    for (const m of round.matches) {
-      const wp = rp.get(m.num)?.winner ?? null
-      const wo = O.picks[m.num] ?? null
-      if (wp != null && wo != null && wp === wo) {
-        detail.bracket.push({ num: m.num, roundKey: round.key, teamId: wp, points: round.pts })
+  if (scope !== 'groups') {
+    for (const round of ROUNDS) {
+      for (const m of round.matches) {
+        const wp = rp.get(m.num)?.winner ?? null
+        const wo = O.picks[m.num] ?? null
+        if (wp != null && wo != null && wp === wo) {
+          detail.bracket.push({ num: m.num, roundKey: round.key, teamId: wp, points: round.pts })
+        }
       }
     }
   }
 
-  // Acierto 1/–/2 y marcador exacto de grupo (Medio/Completo).
-  if (entry.mode === 'winlose' || entry.mode === 'score') {
+  // Acierto 1/–/2 y marcador exacto de grupo (Medio/Completo); no en 'bracket'.
+  if (scope !== 'bracket' && (entry.mode === 'winlose' || entry.mode === 'score')) {
     const er: Results = entry.results ?? {}
     for (let g = 0; g < 12; g++) {
       for (let pair = 0; pair < GROUP_PAIRS.length; pair++) {

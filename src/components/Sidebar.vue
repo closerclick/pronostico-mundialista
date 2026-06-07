@@ -20,6 +20,13 @@ function modeLabel (p: SavedPrediction): string {
   return m === 'winlose' ? t('modes.medium') : m === 'score' ? t('modes.full') : t('modes.simple')
 }
 
+// Etiqueta del alcance (scope); vacía para 'all' (no se muestra chip).
+function scopeTag (p: SavedPrediction): string {
+  let s = p.scope
+  if (!s) { try { s = decodePrediction(p.code).scope } catch { s = 'all' } }
+  return s === 'groups' ? t('scopes.groups') : s === 'bracket' ? t('scopes.bracket') : ''
+}
+
 // % de llenado del pronóstico (para el chip de progreso).
 function fillPct (p: SavedPrediction): number {
   try {
@@ -55,6 +62,11 @@ const emit = defineEmits<{
 
 function modeTag (m: string): string {
   return m === 'free' ? t('rooms.modeFree') : m === 'winlose' ? t('modes.medium') : m === 'score' ? t('modes.full') : t('modes.simple')
+}
+// Etiqueta de alcance de una sala; vacía para 'free'/ausente (no se muestra chip).
+function roomScopeTag (s?: string): string {
+  if (!s || s === 'free') return ''
+  return s === 'groups' ? t('scopes.groups') : s === 'bracket' ? t('scopes.bracket') : t('scopes.all')
 }
 function selectRoom (id: string) { openRoom(id); emit('close') }
 function onShareRoom (id: string) { shareRoom(id); emit('close') }
@@ -124,13 +136,13 @@ const scores = computed<Record<string, number>>(() => {
           @click="emit('select', p.id)"
         >
           <span class="nm">
-            <span class="nm-row">{{ p.name }} <small class="mode-tag">{{ modeLabel(p) }}</small> <small class="fill-tag" :class="{ full: fillPct(p) >= 100 }">{{ fillPct(p) }}%</small></span>
+            <span class="nm-row">{{ p.name }} <small class="mode-tag">{{ modeLabel(p) }}</small> <small v-if="scopeTag(p)" class="scope-tag">{{ scopeTag(p) }}</small> <small class="fill-tag" :class="{ full: fillPct(p) >= 100 }">{{ fillPct(p) }}%</small></span>
             <span v-if="officialEntry" class="score-chip" :title="t('sidebar.pointsTitle')">▦ {{ t('sidebar.points', { n: scores[p.id] ?? 0 }) }}</span>
           </span>
           <span class="tools">
             <button class="share-i" :title="t('common.share')" @click.stop="emit('share', p.id)">
               <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true">
-                <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z" />
+                <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6" /><path d="m21 3-9 9" /><path d="M15 3h6v6" /></g>
               </svg>
             </button>
             <button :title="t('common.print')" @click.stop="emit('print', p.id)">🖨</button>
@@ -161,7 +173,7 @@ const scores = computed<Record<string, number>>(() => {
           @click="emit('select', p.id)"
         >
           <span class="nm">
-            <span class="nm-row">{{ p.name }} <small class="mode-tag">{{ modeLabel(p) }}</small> <small class="fill-tag" :class="{ full: fillPct(p) >= 100 }">{{ fillPct(p) }}%</small></span>
+            <span class="nm-row">{{ p.name }} <small class="mode-tag">{{ modeLabel(p) }}</small> <small v-if="scopeTag(p)" class="scope-tag">{{ scopeTag(p) }}</small> <small class="fill-tag" :class="{ full: fillPct(p) >= 100 }">{{ fillPct(p) }}%</small></span>
             <small class="auth" :class="{ ok: p.author?.verified }">
               {{ p.author?.verified ? '✓' : '⚠' }} {{ p.author?.nickname || t('common.anonymous') }}
             </small>
@@ -170,7 +182,7 @@ const scores = computed<Record<string, number>>(() => {
           <span class="tools">
             <button class="share-i" :title="t('common.share')" @click.stop="emit('share', p.id)">
               <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true">
-                <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z" />
+                <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6" /><path d="m21 3-9 9" /><path d="M15 3h6v6" /></g>
               </svg>
             </button>
             <button :title="t('common.print')" @click.stop="emit('print', p.id)">🖨</button>
@@ -204,7 +216,7 @@ const scores = computed<Record<string, number>>(() => {
           <span class="tools">
             <button class="share-i" :title="t('common.share')" @click.stop="emit('share', p.id)">
               <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true">
-                <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z" />
+                <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6" /><path d="m21 3-9 9" /><path d="M15 3h6v6" /></g>
               </svg>
             </button>
             <button :title="t('common.print')" @click.stop="emit('print', p.id)">🖨</button>
@@ -238,6 +250,7 @@ const scores = computed<Record<string, number>>(() => {
               <span class="nm-row">{{ r.name }}</span>
               <span class="room-meta">
                 <small class="mode-tag">{{ modeTag(r.mode) }}</small>
+                <small v-if="roomScopeTag(r.scope)" class="scope-tag">{{ roomScopeTag(r.scope) }}</small>
                 <small class="fill-tag">👥 {{ r.members.length }}</small>
                 <small v-if="r.sealedUntil > Date.now()" class="seal-tag">🔒</small>
                 <small v-if="r.mine" class="host-tag">{{ t('rooms.host') }}</small>
@@ -246,7 +259,7 @@ const scores = computed<Record<string, number>>(() => {
             <span class="tools">
               <button class="share-i" :title="t('common.share')" @click.stop="onShareRoom(r.id)">
                 <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true">
-                  <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z" />
+                  <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6" /><path d="m21 3-9 9" /><path d="M15 3h6v6" /></g>
                 </svg>
               </button>
               <button :title="t('rooms.leave')" @click.stop="onLeaveRoom(r.id, r.name)">🗑</button>
@@ -318,6 +331,10 @@ const scores = computed<Record<string, number>>(() => {
 .mode-tag {
   font-size: 0.6rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
   color: var(--azure); border: 1px solid var(--line); border-radius: 5px; padding: 0 0.25rem;
+}
+.scope-tag {
+  font-size: 0.6rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--green); border: 1px solid var(--line); border-radius: 5px; padding: 0 0.25rem;
 }
 .fill-tag { font-size: 0.62rem; font-weight: 700; color: var(--muted); }
 .fill-tag.full { color: var(--green); }

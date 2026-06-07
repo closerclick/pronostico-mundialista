@@ -23,7 +23,7 @@ const props = defineProps<{
 function asEntry (m: RoomMember): SavedPrediction {
   return {
     id: m.publickey, name: m.nickname || '', code: m.code,
-    mode: m.mode, results: m.results, updatedAt: m.updatedAt, mine: false,
+    mode: m.mode, scope: m.scope, results: m.results, updatedAt: m.updatedAt, mine: false,
   }
 }
 

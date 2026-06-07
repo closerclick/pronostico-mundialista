@@ -11,7 +11,7 @@
 
 import { signBlob, verifyBlob, parseShareFragment, SHARE_BASE } from './share'
 import { decodePrediction } from './codec'
-import type { Room, RoomMode, RoomMember } from './roomStore'
+import type { Room, RoomMode, RoomScope, RoomMember } from './roomStore'
 
 export const ROOM_PAYLOAD_VERSION = 2
 
@@ -27,6 +27,7 @@ interface RoomDescriptor {
   i: string // id
   n: string // nombre
   m: RoomMode // modo exigido
+  sc?: RoomScope // alcance exigido (opcional; ausente = 'free' en invitaciones legacy)
   s: number // sealedUntil (0 = visible)
   c: number // createdAt
 }
@@ -36,13 +37,14 @@ export interface RoomInit {
   id: string
   name: string
   mode: RoomMode
+  scope: RoomScope
   sealedUntil: number
   createdAt: number
 }
 
 /** Firma el descriptor de la sala y arma el enlace de invitación. */
 export async function buildRoomInviteUrl (init: RoomInit): Promise<{ url: string; hostPubkey: string; hostNick?: string }> {
-  const desc: RoomDescriptor = { i: init.id, n: init.name.slice(0, 60), m: init.mode, s: init.sealedUntil, c: init.createdAt }
+  const desc: RoomDescriptor = { i: init.id, n: init.name.slice(0, 60), m: init.mode, sc: init.scope, s: init.sealedUntil, c: init.createdAt }
   const { blob, publickey, nickname } = await signBlob(JSON.stringify(desc), ROOM_PAYLOAD_VERSION)
   return { url: `${SHARE_BASE}#${ROOM_INVITE_PREFIX}${blob}`, hostPubkey: publickey, hostNick: nickname }
 }
@@ -51,6 +53,7 @@ export interface ParsedRoomInvite {
   id: string
   name: string
   mode: RoomMode
+  scope: RoomScope
   sealedUntil: number
   createdAt: number
   hostPubkey: string
@@ -69,6 +72,7 @@ export async function parseRoomInvite (frag: string): Promise<ParsedRoomInvite |
     id: String(desc.i),
     name: String(desc.n),
     mode: (desc.m ?? 'free') as RoomMode,
+    scope: (desc.sc ?? 'free') as RoomScope,
     sealedUntil: Number(desc.s) || 0,
     createdAt: Number(desc.c) || Date.now(),
     hostPubkey: res.publickey,
@@ -160,6 +164,13 @@ export function modeAllowed (roomMode: RoomMode, predMode: string | undefined): 
   return roomMode === predMode
 }
 
+/** ¿El pronóstico de un miembro respeta el alcance exigido por la sala? Las
+ *  salas legacy no tienen scope (undefined) → se tratan como 'free'. */
+export function scopeAllowed (roomScope: RoomScope | undefined, predScope: string | undefined): boolean {
+  if (!roomScope || roomScope === 'free') return true
+  return roomScope === (predScope ?? 'all')
+}
+
 /**
  * Verifica un fragmento de pronóstico firmado y arma el miembro de sala
  * correspondiente (decodifica modo y resultados del código). Null si no es válido.
@@ -168,8 +179,9 @@ export async function memberFromFrag (frag: string): Promise<RoomMember | null> 
   const parsed = await parseShareFragment(frag)
   if (!parsed) return null
   let mode: RoomMember['mode']
+  let scope: RoomMember['scope']
   let results: RoomMember['results']
-  try { const p = decodePrediction(parsed.code); mode = p.mode; results = p.results } catch { /* */ }
+  try { const p = decodePrediction(parsed.code); mode = p.mode; scope = p.scope; results = p.results } catch { /* */ }
   return {
     publickey: parsed.publickey,
     nickname: parsed.nickname,
@@ -177,6 +189,7 @@ export async function memberFromFrag (frag: string): Promise<RoomMember | null> 
     frag,
     code: parsed.code,
     mode,
+    scope,
     results,
     sealedAt: parsed.sealedAt,
     sealValid: parsed.sealValid,

@@ -5,8 +5,8 @@ import QRCode from 'qrcode'
 import { buildShareUrl } from '../lib/share'
 import type { SavedPrediction } from '../lib/store'
 import { decodePrediction } from '../lib/codec'
-import { isMemberSealed, upsertMember, type RoomMode, type RoomMember } from '../lib/roomStore'
-import { buildRoomInviteUrl, buildMemberContribUrl, buildMemberEnvelope, buildRetractEnvelope, memberFromEnvelope, modeAllowed, TOURNAMENT_START } from '../lib/room'
+import { isMemberSealed, upsertMember, type RoomMode, type RoomScope, type RoomMember } from '../lib/roomStore'
+import { buildRoomInviteUrl, buildMemberContribUrl, buildMemberEnvelope, buildRetractEnvelope, memberFromEnvelope, modeAllowed, scopeAllowed, TOURNAMENT_START } from '../lib/room'
 import { sendRoomInvites } from '../lib/inbox'
 import { useRooms } from '../composables/useRooms'
 import { shortKey } from '../lib/rating'
@@ -34,6 +34,7 @@ const {
 // --- Home (sin sala activa): crear + unirse, inline ------------------------
 const cName = ref('')
 const cMode = ref<RoomMode>('free')
+const cScope = ref<RoomScope>('free')
 const cSealed = ref(false)
 const creating = ref(false)
 const joinText = ref('')
@@ -44,8 +45,8 @@ async function doCreate () {
   if (creating.value || !cName.value.trim()) return
   creating.value = true
   try {
-    await createRoom({ name: cName.value, mode: cMode.value, sealed: cSealed.value })
-    cName.value = ''; cMode.value = 'free'; cSealed.value = false
+    await createRoom({ name: cName.value, mode: cMode.value, scope: cScope.value, sealed: cSealed.value })
+    cName.value = ''; cMode.value = 'free'; cScope.value = 'free'; cSealed.value = false
   } finally { creating.value = false }
 }
 
@@ -72,6 +73,16 @@ function entryMode (p: SavedPrediction): string {
   if (p.mode) return p.mode
   try { return decodePrediction(p.code).mode } catch { return 'manual' }
 }
+function entryScope (p: SavedPrediction): string {
+  if (p.scope) return p.scope
+  try { return decodePrediction(p.code).scope } catch { return 'all' }
+}
+// ¿El pronóstico cumple modo Y alcance exigidos por la sala activa?
+function canContribute (p: SavedPrediction): boolean {
+  const room = activeRoom.value
+  if (!room) return false
+  return modeAllowed(room.mode, entryMode(p)) && scopeAllowed(room.scope, entryScope(p))
+}
 const myMember = computed(() => activeRoom.value?.members.find((m) => m.publickey === myPubkey.value && !m.deleted) ?? null)
 // Miembros visibles (sin lápidas de borrado).
 const liveMembers = computed(() => activeRoom.value?.members.filter((m) => !m.deleted) ?? [])
@@ -92,6 +103,12 @@ function modeName (m: RoomMode): string {
   if (m === 'score') return t('modes.full')
   return t('modes.simple')
 }
+function scopeName (s: RoomScope): string {
+  if (s === 'free') return t('rooms.modeFree')
+  if (s === 'groups') return t('scopes.groups')
+  if (s === 'bracket') return t('scopes.bracket')
+  return t('scopes.all')
+}
 
 // Contribuir mi pronóstico
 const contributing = ref(false)
@@ -101,7 +118,7 @@ function contribute (entry: SavedPrediction) {
   const room = activeRoom.value
   if (!room || contributing.value) return
   contribError.value = ''
-  if (!modeAllowed(room.mode, entryMode(entry))) { contribError.value = t('rooms.modeMismatch'); return }
+  if (!canContribute(entry)) { contribError.value = t('rooms.modeMismatch'); return }
   // Igual que al compartir: exige apodo (abre el perfil si falta) antes de firmar.
   ensureNick(() => { void doContribute(entry) })
 }
@@ -157,7 +174,7 @@ async function buildInvite () {
   if (!room) return
   try {
     const { url } = await buildRoomInviteUrl({
-      id: room.id, name: room.name, mode: room.mode, sealedUntil: room.sealedUntil, createdAt: room.createdAt,
+      id: room.id, name: room.name, mode: room.mode, scope: room.scope ?? 'free', sealedUntil: room.sealedUntil, createdAt: room.createdAt,
     })
     inviteUrl.value = url
     await nextTick()
@@ -215,6 +232,12 @@ watch(activeRoom, (r) => {
           <option value="winlose">{{ t('modes.medium') }}</option>
           <option value="score">{{ t('modes.full') }}</option>
         </select>
+        <label class="lbl">{{ t('rooms.scope') }}</label>
+        <select v-model="cScope" class="sel">
+          <option value="free">{{ t('rooms.modeFree') }}</option>
+          <option value="all">{{ t('scopes.all') }}</option>
+          <option value="groups">{{ t('scopes.groups') }}</option>
+        </select>
         <label class="check"><input type="checkbox" v-model="cSealed" /><span>{{ t('rooms.sealOption') }}</span></label>
         <p class="hint">{{ cSealed ? t('rooms.sealOn') : t('rooms.sealOff') }}</p>
         <button class="primary full" :disabled="creating || !cName.trim()" @click="doCreate">{{ creating ? '…' : t('rooms.createConfirm') }}</button>
@@ -237,9 +260,9 @@ watch(activeRoom, (r) => {
       <p class="contribute-h">{{ t('rooms.contributePrompt') }}</p>
       <p v-if="!myPredictions.length" class="empty">{{ t('rooms.noMyPreds') }}</p>
       <div v-for="p in myPredictions" :key="p.id" class="pick">
-        <span class="pick-nm">{{ p.name }} <small>{{ modeName(entryMode(p) as RoomMode) }}</small></span>
-        <button class="go" :disabled="contributing || !modeAllowed(activeRoom.mode, entryMode(p))"
-          :title="!modeAllowed(activeRoom.mode, entryMode(p)) ? t('rooms.modeMismatch') : ''" @click="contribute(p)">{{ t('rooms.contribute') }}</button>
+        <span class="pick-nm">{{ p.name }} <small>{{ modeName(entryMode(p) as RoomMode) }}<template v-if="entryScope(p) !== 'all'"> · {{ scopeName(entryScope(p) as RoomScope) }}</template></small></span>
+        <button class="go" :disabled="contributing || !canContribute(p)"
+          :title="!canContribute(p) ? t('rooms.modeMismatch') : ''" @click="contribute(p)">{{ t('rooms.contribute') }}</button>
       </div>
       <p v-if="contribError" class="err">{{ contribError }}</p>
     </div>

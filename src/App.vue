@@ -5,9 +5,10 @@ import { setLocale, type Locale } from './i18n'
 import { GROUPS, teamById } from './lib/teams'
 import {
   defaultPrediction, clonePrediction, champion, prunePicks,
-  confirmStandings, revertDraft, autoConfirmNonBracket, hasPendingChanges, completeness, type Prediction,
+  confirmStandings, revertDraft, autoConfirmNonBracket, hasPendingChanges, completeness,
+  listMissing, type Prediction, type MissingItem,
 } from './lib/prediction'
-import type { GameMode } from './lib/standings'
+import type { GameMode, Scope } from './lib/standings'
 import { encodePrediction, decodePrediction } from './lib/codec'
 import { parseShareFragment, buildShareUrl, getIdentity, SHARE_BASE } from './lib/share'
 import { useBackLayer } from '@closerclick/closer-click-nav/vue'
@@ -30,8 +31,10 @@ import IdentityPanel from './components/IdentityPanel.vue'
 import RoomsPage from './components/RoomsPage.vue'
 import { fragKind } from './lib/room'
 import { RoomInbox, type IncomingInvite } from './lib/inbox'
+import { startReceipts, reportOpen } from './lib/receipts'
 import { trackEvent } from './lib/analytics'
 import { useRooms } from './composables/useRooms'
+import { startAppTutorial } from './lib/tutorial'
 import jsPDF from 'jspdf'
 import html2canvas from 'html2canvas'
 
@@ -70,6 +73,7 @@ const section = ref<'predictions' | 'rooms'>('predictions')
 const inviteToast = ref<IncomingInvite | null>(null)
 let inbox: RoomInbox | null = null
 const {
+  rooms,
   initRooms, importRoomInvite, importMemberContrib, applyEnvelope, openRoom, closeRoom,
   ensureSync, stopSync, activeRoom, peerCount, syncStatus, roomShareOpen,
 } = useRooms()
@@ -103,6 +107,30 @@ const championId = computed(() => champion(pred))
 // El modo (tipo) se elige al CREAR el pronóstico y queda FIJO. Para cambiarlo
 // se clona a otro tipo (cloneToType). Etiqueta legible del modo activo:
 const activeModeName = computed(() => modeName(pred.mode))
+// Etiqueta del alcance activo (solo se muestra cuando no es 'all').
+const activeScopeName = computed(() => scopeName(pred.scope))
+
+// El scope 'bracket' (Solo llaves) se siembra desde los resultados oficiales de
+// grupos, así que se OCULTA hasta tener resultados oficiales (se lanzará luego).
+// El modelo de datos ya lo soporta; este flag solo controla su visibilidad en
+// el selector. Poner en true para habilitarlo.
+const BRACKET_SCOPE_ENABLED = false
+// Alcances ofrecidos en el selector (paso 2).
+const SCOPE_OPTIONS = computed<Scope[]>(() =>
+  BRACKET_SCOPE_ENABLED ? ['all', 'groups', 'bracket'] : ['all', 'groups'],
+)
+// Pestañas válidas según el alcance del pronóstico activo.
+function tabAllowed (target: Tab): boolean {
+  if (target === 'resultados') return pred.mode !== 'manual' && pred.scope !== 'bracket'
+  if (target === 'llaves') return pred.scope !== 'groups'
+  if (target === 'grupos') return pred.scope !== 'bracket'
+  return true // puntajes
+}
+// Primera pestaña a mostrar para un (modo, scope) recién creado/seleccionado.
+function defaultTab (mode: GameMode, scope: Scope): Tab {
+  if (scope === 'bracket') return 'llaves'
+  return mode === 'manual' ? 'grupos' : 'resultados'
+}
 
 // ¿Hay resultados sin confirmar? (solo aplica en winlose/score). Reactivo: el
 // watch profundo de `pred` reevalúa este computed al cambiar resultados/modo.
@@ -163,12 +191,32 @@ function openShare (id: string) {
 
 // Si el pronóstico está incompleto, avisamos antes de compartir/imprimir/PDF
 // (no se bloquea: el usuario puede continuar igual).
-const warn = ref<null | { pct: number; run: () => void }>(null)
+// Máximo de faltantes que se listan en el aviso (el resto se resume con "+N").
+const WARN_MAX_MISSING = 5
+const warn = ref<null | { pct: number; missing: string[]; more: number; run: () => void }>(null)
+// Etiqueta de un equipo para el aviso (bandera + código); "?" si la llave aún
+// no tiene definido ese cupo.
+function teamLabel (id: number | null): string {
+  if (id == null) return '?'
+  const tm = teamById(id)
+  return `${tm.flag} ${tm.code}`
+}
+function formatMissing (m: MissingItem): string {
+  const round = m.kind === 'group' ? t('group.title', { letter: m.letter }) : t('bracket.' + m.round)
+  return `${round}: ${teamLabel(m.home)} ${t('common.vs')} ${teamLabel(m.away)}`
+}
 function guardComplete (id: string, run: () => void) {
   const p = predForEntry(id)
-  const pct = p ? completeness(p).pct : 100
+  if (!p) { run(); return }
+  const pct = completeness(p).pct
   if (pct >= 100) { run(); return }
-  warn.value = { pct, run }
+  const all = listMissing(p)
+  warn.value = {
+    pct,
+    missing: all.slice(0, WARN_MAX_MISSING).map(formatMissing),
+    more: Math.max(0, all.length - WARN_MAX_MISSING),
+    run,
+  }
 }
 function confirmWarn () {
   const w = warn.value
@@ -248,6 +296,7 @@ function predForEntry (id: string | null): Prediction | null {
   try {
     const p = decodePrediction(entry.code)
     if (entry.mode) p.mode = entry.mode
+    if (entry.scope) p.scope = entry.scope
     if (entry.results) p.results = JSON.parse(JSON.stringify(entry.results))
     return p
   } catch { return null }
@@ -392,6 +441,7 @@ function commitName () {
 function applyPrediction (p: Prediction) {
   loading = true
   pred.mode = p.mode
+  pred.scope = p.scope
   pred.results = p.results
   pred.groupOrder = p.groupOrder
   pred.thirdsRank = p.thirdsRank
@@ -405,12 +455,14 @@ function persistActive () {
   const entry = activeEntry.value
   if (!entry || !entry.mine) return
   // El oficial no es un pronóstico: sus posiciones/llaves se derivan solas de
-  // los resultados (sin paso de "Confirmar"). Forzamos modo 'score'.
-  if (entry.official) { pred.mode = 'score'; confirmStandings(pred) }
+  // los resultados (sin paso de "Confirmar"). Forzamos modo 'score' y scope 'all'
+  // (es la base de comparación de todos los alcances).
+  if (entry.official) { pred.mode = 'score'; pred.scope = 'all'; confirmStandings(pred) }
   prunePicks(pred)
   entry.code = encodePrediction(pred)
-  // Modo y resultados son datos locales (no van en el código compartido).
+  // Modo, alcance y resultados son datos locales (no van en el código compartido).
   entry.mode = pred.mode
+  entry.scope = pred.scope
   entry.results = pred.results
   entry.draftGroupOrder = pred.draftGroupOrder
   entry.draftThirdsRank = pred.draftThirdsRank
@@ -432,19 +484,20 @@ function select (id: string) {
   setActiveId(id)
   try { applyPrediction(decodePrediction(entry.code)) }
   catch { applyPrediction(defaultPrediction()) }
-  // Modo/resultados: si el entry los tiene guardados (míos), úsalos; si no
-  // (importados), quedan los que ya trae el código decodificado.
+  // Modo/alcance/resultados: si el entry los tiene guardados (míos), úsalos; si
+  // no (importados), quedan los que ya trae el código decodificado.
   if (entry.mode) pred.mode = entry.mode
+  if (entry.scope) pred.scope = entry.scope
   if (entry.results) pred.results = JSON.parse(JSON.stringify(entry.results))
   // El borrador local del entry, si existe; si no, arranca == confirmado.
   pred.draftGroupOrder = entry.draftGroupOrder
     ? entry.draftGroupOrder.map((a) => [...a])
     : pred.groupOrder.map((a) => [...a])
   pred.draftThirdsRank = entry.draftThirdsRank ? [...entry.draftThirdsRank] : [...pred.thirdsRank]
-  // El oficial siempre en modo marcador y abriendo directo en "Resultados".
-  if (entry.official) { pred.mode = 'score'; tab.value = 'resultados' }
-  // La pestaña Resultados no existe en modo Simple: si estaba activa, volvemos a Grupos.
-  else if (pred.mode === 'manual' && tab.value === 'resultados') tab.value = 'grupos'
+  // El oficial siempre en modo marcador, alcance completo y abriendo en "Resultados".
+  if (entry.official) { pred.mode = 'score'; pred.scope = 'all'; tab.value = 'resultados' }
+  // Si la pestaña activa no aplica al (modo, scope) elegido, caemos a una válida.
+  else if (!tabAllowed(tab.value)) tab.value = defaultTab(pred.mode, pred.scope)
   // Nota: NO cerramos el sidebar aquí. select() corre también al montar
   // (auto-selección) y queremos que en móvil el cajón arranque ABIERTO. El
   // cierre al elegir un ítem lo hace el handler @select del cajón.
@@ -460,6 +513,7 @@ function ensureOfficialEntry () {
     mine: true,
     official: true,
     mode: 'score',
+    scope: 'all',
     results: {},
     code: encodePrediction(defaultPrediction()),
     updatedAt: Date.now(),
@@ -478,52 +532,77 @@ function modeName (m: GameMode): string {
   return m === 'winlose' ? t('modes.medium') : m === 'score' ? t('modes.full') : t('modes.simple')
 }
 
-// Crea un pronóstico NUEVO con un tipo (modo) fijo elegido al crearlo.
-function create (mode: GameMode = 'manual') {
+// Nombre legible del alcance (scope).
+function scopeName (s: Scope): string {
+  return s === 'groups' ? t('scopes.groups') : s === 'bracket' ? t('scopes.bracket') : t('scopes.all')
+}
+
+// Nombre de un pronóstico clonado: añade el modo y, si no es 'all', el scope.
+function typeSuffix (mode: GameMode, scope: Scope): string {
+  const m = ' · ' + modeName(mode)
+  return scope === 'all' ? m : m + ' · ' + scopeName(scope)
+}
+
+// Crea un pronóstico NUEVO con un tipo (modo) y alcance (scope) fijos al crearlo.
+function create (mode: GameMode = 'manual', scope: Scope = 'all') {
   const p = defaultPrediction()
   p.mode = mode
+  p.scope = scope
   const entry: SavedPrediction = {
     id: genId(), name: uniqueName(),
-    code: encodePrediction(p), mode, results: {},
+    code: encodePrediction(p), mode, scope, results: {},
     updatedAt: Date.now(), mine: true,
   }
   library.value.push(entry)
   saveLibrary(library.value)
   select(entry.id)
-  tab.value = mode === 'manual' ? 'grupos' : 'resultados'
+  tab.value = defaultTab(mode, scope)
 }
 
-// Clona un pronóstico a OTRO tipo (modo): conserva sus datos y cambia el modo.
-function cloneToType (id: string, mode: GameMode) {
+// Clona un pronóstico a OTRO tipo (modo + scope): conserva sus datos.
+function cloneToType (id: string, mode: GameMode, scope: Scope) {
   const src = library.value.find((p) => p.id === id)
   if (!src) return
   let p: Prediction
   try { p = decodePrediction(src.code) } catch { p = defaultPrediction() }
   p.mode = mode
+  p.scope = scope
   if (src.results) p.results = JSON.parse(JSON.stringify(src.results))
   const entry: SavedPrediction = {
-    id: genId(), name: src.name + ' · ' + modeName(mode),
-    code: encodePrediction(p), mode, results: p.results,
+    id: genId(), name: src.name + typeSuffix(mode, scope),
+    code: encodePrediction(p), mode, scope, results: p.results,
     draftGroupOrder: src.draftGroupOrder, draftThirdsRank: src.draftThirdsRank,
     updatedAt: Date.now(), mine: true,
   }
   library.value.push(entry)
   saveLibrary(library.value)
   select(entry.id)
-  tab.value = mode === 'manual' ? 'grupos' : 'resultados'
+  tab.value = defaultTab(mode, scope)
 }
 
-// Selector de tipo (modal): para "Nuevo" o "Clonar a otro tipo".
-const typePicker = ref<null | { action: 'new' } | { action: 'clone'; id: string }>(null)
+// Selector de tipo (modal), en DOS pasos: primero el modo (Simple/Medio/
+// Completo), luego el alcance (Todo/Grupos/Llaves). `mode` se fija al elegir el
+// paso 1 y avanza al paso 2; null = aún en el paso 1.
+const typePicker = ref<null | { action: 'new' | 'clone'; id?: string; mode?: GameMode }>(null)
 function cloneActive () {
   if (activeId.value) typePicker.value = { action: 'clone', id: activeId.value }
 }
-function pickType (mode: GameMode) {
+// Paso 1: elegir modo → avanza al paso 2 (scope).
+function pickMode (mode: GameMode) {
+  if (!typePicker.value) return
+  typePicker.value = { ...typePicker.value, mode }
+}
+// Volver del paso 2 (scope) al paso 1 (modo).
+function pickerBack () {
+  if (typePicker.value) typePicker.value = { action: typePicker.value.action, id: typePicker.value.id }
+}
+// Paso 2: elegir scope → crea o clona y cierra.
+function pickScope (scope: Scope) {
   const p = typePicker.value
   typePicker.value = null
-  if (!p) return
-  if (p.action === 'new') create(mode)
-  else cloneToType(p.id, mode)
+  if (!p || !p.mode) return
+  if (p.action === 'new') create(p.mode, scope)
+  else if (p.id) cloneToType(p.id, p.mode, scope)
 }
 
 function remove (id: string) {
@@ -572,12 +651,15 @@ async function doImport () {
     const parsed = await parseShareFragment(frag)
     if (!parsed) throw new Error(t('store.invalidLink'))
     decodePrediction(parsed.code) // valida
+    const isMine = parsed.verified && await isOwnAuthor(parsed.publickey)
+    // Acuse de apertura al autor (si es de otra persona). Throttle 24h en el motor.
+    if (!isMine) void reportOpen(parsed.publickey, `${SHARE_BASE}#${frag}`, parsed.name)
     // ¿Ya lo tenemos? lo seleccionamos en vez de duplicar.
     const existing = library.value.find((p) => !p.official && p.code === parsed.code)
     if (existing) {
       select(existing.id)
     } else {
-      const entry = buildIncomingEntry(parsed, frag, parsed.verified && await isOwnAuthor(parsed.publickey))
+      const entry = buildIncomingEntry(parsed, frag, isMine)
       library.value.push(entry)
       saveLibrary(library.value)
       select(entry.id)
@@ -601,7 +683,7 @@ function buildIncomingEntry (parsed: NonNullable<Awaited<ReturnType<typeof parse
     return {
       id: genId(), name: parsed.name || t('store.sharedName'), code: parsed.code,
       updatedAt: Date.now(), mine: true,
-      mode: p.mode, results: p.results,
+      mode: p.mode, scope: p.scope, results: p.results,
       draftGroupOrder: p.groupOrder.map((a) => [...a]), draftThirdsRank: [...p.thirdsRank],
     }
   }
@@ -681,6 +763,10 @@ async function importFromHash (frag: string): Promise<boolean> {
   const parsed = await parseShareFragment(frag)
   if (!parsed) return false
   try { decodePrediction(parsed.code) } catch { return false }
+  const isMine = parsed.verified && await isOwnAuthor(parsed.publickey)
+  // Acuse de apertura: si el pronóstico es de OTRA persona, avisarle (por su
+  // pubkey, que viene en el enlace) que lo abrimos. Throttle 24h en el motor.
+  if (!isMine) void reportOpen(parsed.publickey, `${SHARE_BASE}#${frag}`, parsed.name)
   // Si ya lo tenemos (propio o de amigo), no duplicamos: lo seleccionamos.
   const existing = library.value.find((p) => !p.official && p.code === parsed.code)
   if (existing) {
@@ -689,7 +775,7 @@ async function importFromHash (frag: string): Promise<boolean> {
     tab.value = 'llaves'
     return true
   }
-  const entry = buildIncomingEntry(parsed, frag, parsed.verified && await isOwnAuthor(parsed.publickey))
+  const entry = buildIncomingEntry(parsed, frag, isMine)
   library.value.push(entry)
   saveLibrary(library.value)
   select(entry.id)
@@ -714,6 +800,8 @@ async function startInbox () {
     (env) => { void applyEnvelope(env) },
   )
   inbox.start()
+  // Acuses de apertura: notificar cuando un tercero abre un pronóstico compartido.
+  void startReceipts()
 }
 
 onMounted(async () => {
@@ -741,6 +829,17 @@ onMounted(async () => {
 
   // El buzón de invitaciones corre en segundo plano (no bloquea el arranque).
   startInbox()
+
+  // Tutorial guiado (una sola vez por dispositivo). Solo en visita "limpia" (sin
+  // enlace entrante), para no interrumpir a quien llega por un enlace compartido.
+  if (!frag) {
+    startAppTutorial({
+      lang: () => locale.value,
+      setSection: (s) => { section.value = s },
+      setSidebar: (open) => { sidebarOpen.value = open },
+      hasRoom: () => rooms.value.length > 0,
+    })
+  }
 
   // Rehidratación de pronósticos desde el store del ecosistema (segundo plano):
   // fusiona lo que haya en la nube (otros dispositivos) sin interrumpir la vista.
@@ -819,7 +918,7 @@ onUnmounted(() => {
       <div class="bar-actions" data-testid="room-bar-actions">
         <button class="share-i" data-testid="room-bar-share" :title="t('common.share')" @click="roomShareOpen = true">
           <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor" aria-hidden="true">
-            <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z" />
+            <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6" /><path d="m21 3-9 9" /><path d="M15 3h6v6" /></g>
           </svg>
         </button>
       </div>
@@ -866,7 +965,7 @@ onUnmounted(() => {
       <div v-if="activeId" class="bar-actions" data-testid="bar-actions">
         <button class="share-i" data-testid="bar-share" :title="t('common.share')" @click="tryShare(activeId)">
           <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor" aria-hidden="true">
-            <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z" />
+            <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6" /><path d="m21 3-9 9" /><path d="M15 3h6v6" /></g>
           </svg>
         </button>
         <button :title="t('common.print')" data-testid="bar-print" @click="tryPrint(activeId)">🖨</button>
@@ -889,6 +988,7 @@ onUnmounted(() => {
          a otro tipo. -->
     <div v-if="!readonly && !isOfficial" class="mode-bar" data-testid="mode-bar">
       <span class="mode-label">{{ t('modes.label') }} <strong class="mode-cur">{{ activeModeName }}</strong></span>
+      <span class="mode-label scope-label">{{ t('scopes.label') }} <strong class="mode-cur">{{ activeScopeName }}</strong></span>
     </div>
 
     <!-- Franja de confirmación: visible cuando hay resultados sin aplicar. -->
@@ -901,10 +1001,10 @@ onUnmounted(() => {
     </div>
 
     <nav class="tabs">
-      <button data-testid="tab-grupos" :class="{ active: tab === 'grupos' }" @click="goTab('grupos')">{{ t('tabs.groups') }}</button>
-      <button data-testid="tab-llaves" :class="{ active: tab === 'llaves' }" @click="goTab('llaves')">{{ t('tabs.bracket') }}</button>
+      <button v-if="tabAllowed('grupos')" data-testid="tab-grupos" :class="{ active: tab === 'grupos' }" @click="goTab('grupos')">{{ t('tabs.groups') }}</button>
+      <button v-if="tabAllowed('llaves')" data-testid="tab-llaves" :class="{ active: tab === 'llaves' }" @click="goTab('llaves')">{{ t('tabs.bracket') }}</button>
       <button
-        v-if="pred.mode !== 'manual'"
+        v-if="tabAllowed('resultados')"
         data-testid="tab-resultados"
         :class="{ active: tab === 'resultados' }"
         @click="goTab('resultados')"
@@ -937,7 +1037,7 @@ onUnmounted(() => {
               :readonly="readonly"
             />
           </div>
-          <ThirdsBlock :pred="pred" :readonly="readonly" class="thirds-wrap" />
+          <ThirdsBlock v-if="pred.scope !== 'groups'" :pred="pred" :readonly="readonly" class="thirds-wrap" />
         </template>
 
         <!-- Modos winlose/score: tablas CALCULADAS en solo lectura. -->
@@ -1024,6 +1124,10 @@ onUnmounted(() => {
       <div class="warn-modal" data-testid="warn-incomplete">
         <h3>⚠ {{ t('warn.title') }}</h3>
         <p>{{ t('warn.msg', { pct: warn.pct }) }}</p>
+        <ul v-if="warn.missing.length" class="warn-list" data-testid="warn-missing">
+          <li v-for="(item, i) in warn.missing" :key="i">{{ item }}</li>
+          <li v-if="warn.more" class="warn-more">{{ t('warn.more', { n: warn.more }) }}</li>
+        </ul>
         <div class="warn-actions">
           <button class="warn-cancel" @click="warn = null">{{ t('warn.cancel') }}</button>
           <button class="warn-go" @click="confirmWarn">{{ t('warn.continue') }}</button>
@@ -1031,20 +1135,44 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Selector de tipo (Nuevo / Clonar a otro tipo). -->
+    <!-- Selector de tipo (Nuevo / Clonar), en DOS pasos: 1) modo, 2) alcance. -->
     <div v-if="typePicker" class="overlay" @click.self="typePicker = null">
       <div class="type-modal" data-testid="type-picker">
         <button class="x" @click="typePicker = null" :aria-label="t('common.close')">×</button>
-        <h3>{{ typePicker.action === 'new' ? t('typePicker.newTitle') : t('typePicker.cloneTitle') }}</h3>
-        <button class="type-opt" data-testid="type-manual" @click="pickType('manual')">
-          <strong>{{ t('modes.simple') }}</strong><span>{{ t('typePicker.simpleDesc') }}</span>
-        </button>
-        <button class="type-opt" data-testid="type-winlose" @click="pickType('winlose')">
-          <strong>{{ t('modes.medium') }}</strong><span>{{ t('typePicker.mediumDesc') }}</span>
-        </button>
-        <button class="type-opt" data-testid="type-score" @click="pickType('score')">
-          <strong>{{ t('modes.full') }}</strong><span>{{ t('typePicker.fullDesc') }}</span>
-        </button>
+
+        <!-- Paso 1: MODO (Simple / Medio / Completo). -->
+        <template v-if="!typePicker.mode">
+          <h3>{{ typePicker.action === 'new' ? t('typePicker.newTitle') : t('typePicker.cloneTitle') }}</h3>
+          <p class="step-hint">{{ t('typePicker.step1') }}</p>
+          <button class="type-opt" data-testid="type-manual" @click="pickMode('manual')">
+            <strong>{{ t('modes.simple') }}</strong><span>{{ t('typePicker.simpleDesc') }}</span>
+          </button>
+          <button class="type-opt" data-testid="type-winlose" @click="pickMode('winlose')">
+            <strong>{{ t('modes.medium') }}</strong><span>{{ t('typePicker.mediumDesc') }}</span>
+          </button>
+          <button class="type-opt" data-testid="type-score" @click="pickMode('score')">
+            <strong>{{ t('modes.full') }}</strong><span>{{ t('typePicker.fullDesc') }}</span>
+          </button>
+        </template>
+
+        <!-- Paso 2: ALCANCE (Todo / Grupos / Llaves). -->
+        <template v-else>
+          <h3>{{ t('typePicker.step2Title') }}</h3>
+          <p class="step-hint">
+            {{ t('typePicker.step2', { mode: modeName(typePicker.mode) }) }}
+            <button class="step-back" data-testid="type-back" @click="pickerBack()">‹ {{ t('typePicker.back') }}</button>
+          </p>
+          <button
+            v-for="s in SCOPE_OPTIONS"
+            :key="s"
+            class="type-opt"
+            :data-testid="'scope-' + s"
+            @click="pickScope(s)"
+          >
+            <strong>{{ scopeName(s) }}</strong>
+            <span>{{ s === 'groups' ? t('scopes.groupsDesc') : s === 'bracket' ? t('scopes.bracketDesc') : t('scopes.allDesc') }}</span>
+          </button>
+        </template>
       </div>
     </div>
 
@@ -1235,6 +1363,7 @@ onUnmounted(() => {
   background: rgba(255, 255, 255, 0.015);
 }
 .mode-label { color: var(--muted); font-size: 0.8rem; font-weight: 700; }
+.scope-label { padding-left: 0.6rem; border-left: 1px solid var(--line); }
 .mode-cur { color: var(--azure); }
 .mode-clone {
   margin-left: auto; background: transparent; color: var(--azure);
@@ -1248,7 +1377,17 @@ onUnmounted(() => {
   background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
   padding: 1.4rem; max-width: 360px; width: 100%; position: relative; box-shadow: var(--shadow);
 }
-.type-modal h3 { color: var(--azure); margin-bottom: 0.9rem; }
+.type-modal h3 { color: var(--azure); margin-bottom: 0.5rem; }
+.step-hint {
+  color: var(--muted); font-size: 0.78rem; margin-bottom: 0.8rem;
+  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+}
+.step-back {
+  background: none; border: 1px solid var(--line); color: var(--azure); border-radius: 6px;
+  padding: 0.1rem 0.5rem; cursor: pointer; font-family: inherit; font-weight: 700;
+  font-size: 0.72rem; white-space: nowrap; flex-shrink: 0;
+}
+.step-back:hover { background: rgba(65, 180, 255, 0.12); }
 .type-opt {
   display: flex; flex-direction: column; gap: 0.15rem; width: 100%; text-align: left;
   background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
@@ -1268,7 +1407,15 @@ onUnmounted(() => {
   padding: 1.4rem; max-width: 360px; width: 100%; box-shadow: var(--shadow);
 }
 .warn-modal h3 { color: var(--gold); margin-bottom: 0.6rem; }
-.warn-modal p { font-size: 0.88rem; color: var(--text); margin-bottom: 1rem; }
+.warn-modal p { font-size: 0.88rem; color: var(--text); margin-bottom: 0.7rem; }
+.warn-list {
+  list-style: none; margin: 0 0 1rem; padding: 0.55rem 0.7rem;
+  background: rgba(255, 207, 63, 0.08); border: 1px solid var(--line); border-radius: 10px;
+  font-size: 0.84rem; color: var(--text); max-height: 9.5rem; overflow-y: auto;
+}
+.warn-list li { padding: 0.18rem 0; font-variant-numeric: tabular-nums; }
+.warn-list li + li { border-top: 1px solid rgba(255, 255, 255, 0.05); }
+.warn-list .warn-more { color: var(--muted); font-style: italic; }
 .warn-actions { display: flex; gap: 0.5rem; justify-content: flex-end; }
 .warn-cancel {
   background: transparent; color: var(--muted); border: 1px solid var(--line);

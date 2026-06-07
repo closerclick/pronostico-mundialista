@@ -6,11 +6,14 @@
 // autoritativo). El proxy y los enlaces/QR solo reparten/sincronizan; cada
 // quien guarda en SU localStorage los pronósticos de las salas en las que está.
 
-import type { GameMode, Results } from './standings'
+import type { GameMode, Scope, Results } from './standings'
 import { pullThread, syncThread, THREAD_ROOMS } from './cloud'
 
 /** Modo exigido por la sala: uno fijo o 'free' (cualquier tipo). */
 export type RoomMode = GameMode | 'free'
+
+/** Alcance exigido por la sala: uno fijo o 'free' (cualquier alcance). */
+export type RoomScope = Scope | 'free'
 
 /** El pronóstico firmado que un miembro aportó a la sala. */
 export interface RoomMember {
@@ -25,6 +28,8 @@ export interface RoomMember {
   code: string
   /** modo y resultados locales del pronóstico (no viajan en el código) */
   mode?: GameMode
+  /** alcance del pronóstico (decodificado del código): 'all'/'groups'/'bracket' */
+  scope?: Scope
   results?: Results
   /** sello de tiempo del sellador: cuándo existió este pronóstico (ms epoch) */
   sealedAt?: number
@@ -48,6 +53,8 @@ export interface Room {
   name: string
   /** modo de juego exigido a los miembros (o 'free') */
   mode: RoomMode
+  /** alcance exigido a los miembros (o 'free'). Ausente = 'free' (salas legacy). */
+  scope?: RoomScope
   /** privacidad: 0 = pronósticos visibles desde ya; o un timestamp (ms) hasta el
    *  que los pronósticos ajenos quedan "sellados" (ocultos para evitar copia). */
   sealedUntil: number

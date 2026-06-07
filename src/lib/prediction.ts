@@ -1,15 +1,21 @@
 // Estado del pronóstico y su resolución a equipos concretos en cada partido.
 
-import { GROUPS } from './teams'
+import { GROUPS, GROUP_LETTERS } from './teams'
 import {
-  R32, ALL_LATER, FINAL, THIRD_PLACE, THIRD_SLOTS, allocateThirds,
-  type Slot, type R32Match, type LaterMatch,
+  R32, ALL_LATER, FINAL, THIRD_PLACE, THIRD_SLOTS, allocateThirds, roundOf,
+  type Slot, type R32Match, type LaterMatch, type RoundKey,
 } from './bracket'
-import { computeStandings, certainGroupOrder, GROUP_MATCH_COUNT, type GameMode, type Results } from './standings'
+import {
+  computeStandings, certainGroupOrder, GROUP_MATCH_COUNT, GROUP_PAIRS, MATCHES_PER_GROUP,
+  groupMatchIndex, teamAt, type GameMode, type Scope, type Results,
+} from './standings'
 
 export interface Prediction {
   // Modo de juego: 'winlose' (solo gana/empata/pierde) o 'score' (con marcador).
   mode: GameMode
+  // Alcance: 'all' (grupos + llaves), 'groups' (solo grupos) o 'bracket' (solo
+  // llaves). Default 'all'; los pronósticos antiguos (sin scope) son 'all'.
+  scope: Scope
   // Resultados de los 72 partidos de grupos (entrada del usuario). Las
   // posiciones se CALCULAN desde aquí, pero solo se aplican al confirmar.
   results: Results
@@ -32,6 +38,7 @@ export interface Prediction {
 export function defaultPrediction (): Prediction {
   return {
     mode: 'manual',
+    scope: 'all',
     results: {},
     groupOrder: GROUPS.map((g) => g.teams.map((t) => t.id)),
     thirdsRank: GROUPS.map((_, i) => i),
@@ -44,6 +51,7 @@ export function defaultPrediction (): Prediction {
 export function clonePrediction (p: Prediction): Prediction {
   return {
     mode: p.mode,
+    scope: p.scope,
     // Clon JSON (results es data plana); structuredClone falla con proxies reactivos de Vue.
     results: JSON.parse(JSON.stringify(p.results)) as Results,
     groupOrder: p.groupOrder.map((g) => [...g]),
@@ -116,6 +124,9 @@ function bracketSignature (groupOrder: number[][], thirdsRank: number[]): string
  * confirmados (ver `autoConfirmNonBracket`).
  */
 export function hasPendingChanges (p: Prediction): boolean {
+  // Sin llaves no hay nada que "afecte las llaves": en 'groups'/'bracket' los
+  // reordenamientos se confirman solos (ver autoConfirmNonBracket).
+  if (p.scope !== 'all') return false
   const next = draftStandings(p)
   return bracketSignature(next.groupOrder, next.thirdsRank) !==
     bracketSignature(p.groupOrder, p.thirdsRank)
@@ -132,7 +143,10 @@ export function autoConfirmNonBracket (p: Prediction): boolean {
   const rawChanged = JSON.stringify(next.groupOrder) !== JSON.stringify(p.groupOrder) ||
     JSON.stringify(next.thirdsRank) !== JSON.stringify(p.thirdsRank)
   if (!rawChanged) return false
-  if (bracketSignature(next.groupOrder, next.thirdsRank) !==
+  // En 'all' solo auto-confirmamos lo que NO toca las llaves (el resto pide
+  // confirmación). Sin llaves ('groups'/'bracket') confirmamos siempre.
+  if (p.scope === 'all' &&
+      bracketSignature(next.groupOrder, next.thirdsRank) !==
       bracketSignature(p.groupOrder, p.thirdsRank)) return false
   p.groupOrder = next.groupOrder.map((g) => [...g])
   p.thirdsRank = [...next.thirdsRank]
@@ -249,6 +263,48 @@ export function champion (p: Prediction): number | null {
   return resolveMatches(p).get(FINAL.num)?.winner ?? null
 }
 
+// Una decisión pendiente del pronóstico, con datos suficientes para que la UI
+// arme una etiqueta legible ("Grupo A: MEX vs RSA", "Octavos: …"). Los equipos
+// van como team id (o null en una llave cuyos cupos aún no se conocen).
+export type MissingItem =
+  | { kind: 'group'; letter: string; home: number; away: number }
+  | { kind: 'bracket'; num: number; round: RoundKey; home: number | null; away: number | null }
+
+/**
+ * Lista las decisiones que faltan por definir, en orden de "qué arreglar
+ * primero": antes los partidos de grupo (la base; solo en modos con resultados)
+ * y luego las llaves ronda por ronda (R32 → final). Cuenta lo mismo que
+ * `completeness` (de ahí se deriva el %), pero ordenado para que las faltas
+ * accionables (con equipos ya conocidos) salgan primero.
+ */
+export function listMissing (p: Prediction): MissingItem[] {
+  const out: MissingItem[] = []
+  // Partidos de grupo: en 'manual' las posiciones se ponen a mano, no hay
+  // resultados que cargar; en scope 'bracket' la fase de grupos no es del
+  // usuario (sale de los resultados oficiales). En ambos casos no cuentan.
+  if (p.mode !== 'manual' && p.scope !== 'bracket') {
+    for (let g = 0; g < GROUPS.length; g++) {
+      for (let pair = 0; pair < MATCHES_PER_GROUP; pair++) {
+        if (p.results[groupMatchIndex(g, pair)]) continue
+        const [a, b] = GROUP_PAIRS[pair]!
+        out.push({ kind: 'group', letter: GROUP_LETTERS[g]!, home: teamAt(g, a), away: teamAt(g, b) })
+      }
+    }
+  }
+  // Llaves sin ganador decidido (R32 primero, luego rondas hacia la final).
+  // En scope 'groups' no hay llaves.
+  if (p.scope !== 'groups') {
+    const resolved = resolveMatches(p)
+    for (const mt of [...R32, ...ALL_LATER]) {
+      const m = resolved.get(mt.num)
+      if (m?.winner == null) {
+        out.push({ kind: 'bracket', num: mt.num, round: roundOf(mt.num), home: m?.home ?? null, away: m?.away ?? null })
+      }
+    }
+  }
+  return out
+}
+
 /**
  * % de llenado del pronóstico: cuántas decisiones necesarias están tomadas.
  * Llaves: las 32 (R32→final + 3.º) con ganador decidido. En modos con
@@ -256,19 +312,12 @@ export function champion (p: Prediction): number | null {
  * posiciones ya están dadas, así que solo cuentan las llaves.)
  */
 export function completeness (p: Prediction): { filled: number; total: number; pct: number } {
-  const resolved = resolveMatches(p)
-  let filled = 0
-  let total = 0
-  for (const mt of [...R32, ...ALL_LATER]) {
-    total++
-    if (resolved.get(mt.num)?.winner != null) filled++
-  }
-  if (p.mode !== 'manual') {
-    for (let i = 0; i < GROUP_MATCH_COUNT; i++) {
-      total++
-      if (p.results[i]) filled++
-    }
-  }
+  // Las llaves cuentan salvo en scope 'groups'; los 72 partidos de grupo cuentan
+  // solo en modos con resultados y cuando el scope incluye la fase de grupos.
+  const bracketTotal = p.scope === 'groups' ? 0 : R32.length + ALL_LATER.length
+  const groupTotal = (p.mode !== 'manual' && p.scope !== 'bracket') ? GROUP_MATCH_COUNT : 0
+  const total = bracketTotal + groupTotal
+  const filled = total - listMissing(p).length
   return { filled, total, pct: total ? Math.round((filled / total) * 100) : 0 }
 }
 

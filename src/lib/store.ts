@@ -1,7 +1,7 @@
 // Librería de pronósticos guardada en localStorage: los míos (editables) y los
 // importados de otras personas (firmados, solo lectura).
 
-import type { GameMode, Results } from './standings'
+import type { GameMode, Scope, Results } from './standings'
 import { pullThread, syncThread, THREAD_PREDICTIONS } from './cloud'
 
 export interface SavedAuthor {
@@ -26,6 +26,9 @@ export interface SavedPrediction {
   sharedUrl?: string
   // Datos de resultados (solo locales; no viajan en el código compartido).
   mode?: GameMode
+  // Alcance del pronóstico (grupos/llaves/ambas). El código ya lo lleva, pero se
+  // guarda también aquí para mostrarlo sin decodificar. Ausente = 'all' (legacy).
+  scope?: Scope
   results?: Results
   // Borrador de posiciones del modo manual (solo local; no viaja en el código).
   draftGroupOrder?: number[][]

@@ -7,6 +7,7 @@
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { buildShareUrl } from '../lib/share'
+import { getNotificationsController } from '../lib/notifications'
 import '@closerclick/closer-click-share'
 
 const { t, locale } = useI18n()
@@ -16,6 +17,16 @@ const emit = defineEmits<{ close: []; print: [url: string]; pdf: [url: string] }
 
 const url = ref('')
 const nickname = ref<string | undefined>(undefined)
+
+// Solo tiene sentido pedir "avísame cuando lo abran" al compartir un pronóstico
+// PROPIO (el enlace lleva mi pubkey → el acuse vuelve a mí). En uno ajeno
+// re-compartido el acuse iría al autor original, no a mí.
+const trackable = computed(() => !props.presetUrl)
+// Inyecta el controlador de notificaciones como PROPIEDAD del custom element
+// (no atributo), igual patrón que <closer-click-profile>.
+function bindShare (el: (Element & { notifications?: unknown }) | null) {
+  if (el) el.notifications = getNotificationsController()
+}
 
 async function generate () {
   url.value = ''
@@ -41,12 +52,14 @@ const theme = {
 
 <template>
   <closer-click-share
+    :ref="bindShare"
     :lang="locale"
     :style="theme"
     :url="url"
     :heading="t('share.title')"
     :hint="hint"
     :open="open"
+    :track="trackable ? '' : null"
     @cc-share-close="emit('close')"
   >
     <!-- acciones propias de pronosticador: imprimir / PDF de la hoja -->

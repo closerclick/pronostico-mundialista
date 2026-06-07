@@ -8,7 +8,7 @@ import type { PeerInfo } from '@closerclick/closer-click-identity'
 import { getIdentity } from '../lib/identity'
 import {
   loadRooms, saveRooms, getActiveRoomId, setActiveRoomId, upsertMember, hydrateRooms,
-  type Room, type RoomMode,
+  type Room, type RoomMode, type RoomScope,
 } from '../lib/roomStore'
 import {
   genRoomId, TOURNAMENT_START, parseRoomInvite, parseMemberContrib, memberFromEnvelope,
@@ -143,7 +143,7 @@ function closeRoom () {
 }
 
 // --- Crear / unirse / salir -------------------------------------------------
-async function createRoom (input: { name: string; mode: RoomMode; sealed: boolean }): Promise<Room | null> {
+async function createRoom (input: { name: string; mode: RoomMode; scope: RoomScope; sealed: boolean }): Promise<Room | null> {
   const idi = await getIdentity()
   if (!idi?.me?.publickey) { unreachable.value = true; return null }
   const now = Date.now()
@@ -151,6 +151,7 @@ async function createRoom (input: { name: string; mode: RoomMode; sealed: boolea
     id: genRoomId(),
     name: input.name.trim().slice(0, 60),
     mode: input.mode,
+    scope: input.scope,
     sealedUntil: input.sealed ? TOURNAMENT_START : 0,
     hostPubkey: idi.me.publickey,
     hostNick: idi.me.nickname || undefined,
@@ -175,15 +176,15 @@ function extractFragment (text: string): string {
 async function joinByLink (text: string): Promise<string> {
   const parsed = await parseRoomInvite(extractFragment(text))
   if (!parsed) throw new Error('invalid')
-  return upsertRoomFromInvite(parsed.id, parsed.name, parsed.mode, parsed.sealedUntil, parsed.hostPubkey, parsed.createdAt)
+  return upsertRoomFromInvite(parsed.id, parsed.name, parsed.mode, parsed.scope, parsed.sealedUntil, parsed.hostPubkey, parsed.createdAt)
 }
 
 /** Crea/actualiza una sala desde un descriptor de invitación ya verificado. */
-function upsertRoomFromInvite (id: string, name: string, mode: RoomMode, sealedUntil: number, hostPubkey: string, createdAt: number): string {
+function upsertRoomFromInvite (id: string, name: string, mode: RoomMode, scope: RoomScope, sealedUntil: number, hostPubkey: string, createdAt: number): string {
   let room = rooms.value.find((r) => r.id === id)
   if (!room) {
     room = {
-      id, name, mode, sealedUntil, hostPubkey,
+      id, name, mode, scope, sealedUntil, hostPubkey,
       mine: hostPubkey === myPubkey.value,
       createdAt, updatedAt: Date.now(), members: [],
     }
@@ -204,7 +205,7 @@ async function importRoomInvite (frag: string): Promise<string | null> {
   const parsed = await parseRoomInvite(frag)
   if (!parsed) return null
   reloadRooms()
-  return upsertRoomFromInvite(parsed.id, parsed.name, parsed.mode, parsed.sealedUntil, parsed.hostPubkey, parsed.createdAt)
+  return upsertRoomFromInvite(parsed.id, parsed.name, parsed.mode, parsed.scope, parsed.sealedUntil, parsed.hostPubkey, parsed.createdAt)
 }
 
 async function importMemberContrib (frag: string): Promise<string | null> {

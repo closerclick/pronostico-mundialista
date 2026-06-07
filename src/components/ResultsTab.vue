@@ -37,6 +37,8 @@ const props = defineProps<{ pred: Prediction; readonly?: boolean; official?: Sav
 
 // Solo en modo 'score' mostramos los inputs de goles.
 const showGoals = computed(() => props.pred.mode === 'score')
+// En alcance 'groups' (solo grupos) no se cargan eliminatorias.
+const showKnockout = computed(() => props.pred.scope !== 'groups')
 
 // --- Estrella en partidos que sumaron puntos vs los Resultados oficiales ---
 // (App pasa `official=null` cuando se está editando la entrada oficial.)
@@ -228,8 +230,10 @@ function fillRandom (): void {
   props.pred.draftGroupOrder = st.groupOrder.map((a) => [...a])
   props.pred.draftThirdsRank = [...st.thirdsRank]
   // 3) Recorrer el bracket en orden y elegir ganador al azar entre los presentes
-  //    (cada elección define los participantes de la ronda siguiente).
+  //    (cada elección define los participantes de la ronda siguiente). En alcance
+  //    'groups' no hay llaves: dejamos los picks vacíos.
   props.pred.picks = {}
+  if (props.pred.scope === 'groups') return
   for (const round of koRounds) {
     for (const num of round.nums) {
       const m = resolved.value.get(num)
@@ -363,8 +367,9 @@ function fetchOfficial (): void {
       </div>
     </div>
 
-    <!-- Eliminatorias: todas las llaves en orden, agrupadas por ronda. -->
-    <section class="ko">
+    <!-- Eliminatorias: todas las llaves en orden, agrupadas por ronda. Ocultas
+         en alcance 'solo grupos'. -->
+    <section v-if="showKnockout" class="ko">
       <h3 class="ko-title">{{ t('results.knockout') }}</h3>
       <div v-for="round in koRounds" :key="round.titleKey" class="ko-round">
         <div class="ko-round-head">{{ t(round.titleKey) }}</div>

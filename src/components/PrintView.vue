@@ -98,6 +98,15 @@ const modeLabel = computed(() => {
     default: return t('modes.simple')
   }
 })
+// Alcance del pronóstico: qué fases incluye (controla qué secciones se imprimen).
+const showGroupsSection = computed(() => props.pred.scope !== 'bracket')
+const showBracketSection = computed(() => props.pred.scope !== 'groups')
+// Etiqueta de tipo: modo + alcance (el alcance solo si no es 'all').
+const typeLabel = computed(() => {
+  const scope = props.pred.scope ?? 'all'
+  if (scope === 'all') return modeLabel.value
+  return modeLabel.value + ' · ' + (scope === 'groups' ? t('scopes.groups') : t('scopes.bracket'))
+})
 
 // Grilla de grupos: orden pronosticado con marca de clasificados (1.º, 2.º) y
 // de los terceros que clasifican (8 mejores).
@@ -170,12 +179,13 @@ const groupResultViews = computed<GroupResultView[]>(() =>
         <h1>{{ title }}</h1>
         <p v-if="author" class="ph-author">{{ t('print.author', { author }) }}</p>
       </div>
-      <div class="ph-event">{{ t('print.event') }}<span class="ph-mode">{{ modeLabel }}</span></div>
+      <div class="ph-event">{{ t('print.event') }}<span class="ph-mode">{{ typeLabel }}</span></div>
     </header>
 
     <div class="body">
-      <!-- Fase de grupos: template DIFERENTE según el modo de juego. -->
-      <section class="groups" :class="{ 'with-goals': pred.mode === 'score' }">
+      <!-- Fase de grupos: template DIFERENTE según el modo de juego. Se omite en
+           alcance 'bracket' (solo llaves). -->
+      <section v-if="showGroupsSection" class="groups" :class="{ 'with-goals': pred.mode === 'score' }">
         <h2>{{ t('print.groups') }}</h2>
 
         <!-- Modo SIMPLE (manual): solo el orden, sin puntos. -->
@@ -243,8 +253,8 @@ const groupResultViews = computed<GroupResultView[]>(() =>
         </p>
       </section>
 
-      <!-- Llaves -->
-      <section class="bracket">
+      <!-- Llaves. Se omite en alcance 'groups' (solo grupos). -->
+      <section v-if="showBracketSection" class="bracket">
         <h2>{{ t('print.bracket') }}</h2>
         <div class="board">
           <div v-for="(col, ci) in leftCols" :key="'l' + ci" class="col">

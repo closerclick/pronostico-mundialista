@@ -89,6 +89,19 @@ export const THIRD_PLACE: LaterMatch = { num: 103, from: [101, 102] }
 
 export const ALL_LATER: LaterMatch[] = [...R16, ...QF, ...SF, THIRD_PLACE, FINAL]
 
+// Clave de ronda de un partido de eliminatorias (para etiquetas i18n
+// `bracket.<key>`). Numeración FIFA: 73-88 R32, 89-96 R16, 97-100 cuartos,
+// 101-102 semis, 103 tercer puesto, 104 final.
+export type RoundKey = 'r32' | 'r16' | 'qf' | 'sf' | 'third' | 'final'
+export function roundOf (num: number): RoundKey {
+  if (num === FINAL.num) return 'final'
+  if (num === THIRD_PLACE.num) return 'third'
+  if (num >= 101) return 'sf'
+  if (num >= 97) return 'qf'
+  if (num >= 89) return 'r16'
+  return 'r32'
+}
+
 /**
  * Asigna los 8 grupos cuyos terceros clasificaron a los 8 thirdSlots,
  * respetando los grupos permitidos por slot. Devuelve un arreglo indexado por

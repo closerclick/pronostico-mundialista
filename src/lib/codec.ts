@@ -10,18 +10,31 @@
 //   - 32 picks × 2 bits          (0 sin decidir, 1 = home/arriba, 2 = away/abajo)
 //   - resultados: cuenta 7 bits + por partido { clave 7, o 2, hayGoles 1
 //       [gh 4, ga 4], hayPenales 1 [ph 4, pa 4] }  (goles/penales 0..15)
-// Versión 2 (sin modo ni resultados) se sigue leyendo por compatibilidad.
+//
+// Versión 4: idéntica a la 3 pero inserta el ALCANCE (scope) en 2 bits justo
+// después del modo (0 all, 1 groups, 2 bracket). Para no romper nada y mantener
+// compatibilidad total hacia atrás Y hacia adelante:
+//   - los pronósticos con scope 'all' (el default y TODOS los previos) se
+//     codifican como versión 3 (bytes idénticos a hoy; apps viejas los leen).
+//   - solo los pronósticos con scope 'groups'/'bracket' usan la versión 4.
+// Versiones 2 (sin modo/resultados) y 3 (sin scope) se siguen leyendo: su scope
+// es 'all'.
 
 import { GROUPS } from './teams'
 import { R32, R16, QF, SF, THIRD_PLACE, FINAL } from './bracket'
 import { defaultPrediction, resolveMatches, type Prediction } from './prediction'
-import type { GameMode, MatchResult } from './standings'
+import type { GameMode, Scope, MatchResult } from './standings'
 
-const VERSION = 3
+const VERSION_UNSCOPED = 3 // 'all' → formato clásico (compatible con apps viejas)
+const VERSION_SCOPED = 4 // 'groups'/'bracket' → añade 2 bits de scope tras el modo
 
 const MODES: GameMode[] = ['manual', 'winlose', 'score']
 function modeToCode (m: GameMode): number { const i = MODES.indexOf(m); return i < 0 ? 0 : i }
 function codeToMode (n: number): GameMode { return MODES[n] ?? 'manual' }
+
+const SCOPES: Scope[] = ['all', 'groups', 'bracket']
+function scopeToCode (s: Scope): number { const i = SCOPES.indexOf(s); return i < 0 ? 0 : i }
+function codeToScope (n: number): Scope { return SCOPES[n] ?? 'all' }
 const cap15 = (v: number): number => Math.max(0, Math.min(15, Math.floor(v)))
 
 // Orden fijo de partidos para los picks (debe permanecer estable).
@@ -148,8 +161,12 @@ function readResults (r: BitReader): Record<number, MatchResult> {
 
 export function encodePrediction (p: Prediction): string {
   const w = new BitWriter()
-  w.write(VERSION, 4)
+  // scope 'all' → versión 3 clásica (sin bits de scope); resto → versión 4.
+  const scope = p.scope ?? 'all'
+  const scoped = scope !== 'all'
+  w.write(scoped ? VERSION_SCOPED : VERSION_UNSCOPED, 4)
   w.write(modeToCode(p.mode), 2)
+  if (scoped) w.write(scopeToCode(scope), 2)
   for (let g = 0; g < 12; g++) {
     const base = GROUPS[g]!.teams.map((t) => t.id)
     w.write(permToIndex(p.groupOrder[g]!, base), 5)
@@ -175,9 +192,12 @@ export function encodePrediction (p: Prediction): string {
 export function decodePrediction (code: string): Prediction {
   const r = new BitReader(b64urlToBytes(code))
   const version = r.read(4)
-  if (version !== 2 && version !== 3) throw new Error(`Versión de código no soportada: ${version}`)
+  if (version !== 2 && version !== 3 && version !== 4) throw new Error(`Versión de código no soportada: ${version}`)
   const p = defaultPrediction()
-  if (version === 3) p.mode = codeToMode(r.read(2))
+  // v2: sin modo ni scope (modo 'manual', scope 'all'). v3: modo, scope 'all'.
+  // v4: modo + scope.
+  if (version >= 3) p.mode = codeToMode(r.read(2))
+  if (version >= 4) p.scope = codeToScope(r.read(2))
   for (let g = 0; g < 12; g++) {
     const base = GROUPS[g]!.teams.map((t) => t.id)
     p.groupOrder[g] = indexToPerm(r.read(5), base)
@@ -193,7 +213,7 @@ export function decodePrediction (code: string): Prediction {
   // leerse ANTES de reconstruir los picks: en modos no-manual los cupos de la
   // llave se resuelven desde `results` (posiciones ciertas), así que sin ellos
   // resolveMatches devolvería null y se perderían los picks.
-  if (version === 3) p.results = readResults(r)
+  if (version >= 3) p.results = readResults(r)
   // Reconstruye los team id resolviendo de forma incremental: cada partido
   // depende solo de los anteriores en PICK_ORDER (R32→final), que ya quedaron
   // decididos al llegar a él.

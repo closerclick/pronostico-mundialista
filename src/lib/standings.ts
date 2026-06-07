@@ -18,6 +18,16 @@ import { GROUPS } from './teams'
 //   - 'score':   con marcador (goles) → calcula posiciones con diferencia de gol.
 export type GameMode = 'manual' | 'winlose' | 'score'
 
+// ALCANCE (scope) del pronóstico: qué fases incluye. Es una dimensión ORTOGONAL
+// al modo de juego (cada modo × cada scope = una combinación). Junto al modo
+// (Simple/Medio/Completo) forman los "9 tipos":
+//   - 'all':     dos fases — fase de grupos + llaves (comportamiento clásico).
+//   - 'groups':  solo la fase de grupos (sin llaves).
+//   - 'bracket': solo las llaves, sembradas desde los RESULTADOS oficiales de
+//                grupos. Queda OCULTO hasta tener resultados oficiales (ver
+//                BRACKET_SCOPE_ENABLED en App.vue); el modelo ya lo soporta.
+export type Scope = 'all' | 'groups' | 'bracket'
+
 // Resultado de un partido.
 //   o: 0 = gana el local (primero del par), 1 = empate, 2 = gana el visitante.
 //   gh/ga: goles local/visitante (opcionales; solo relevantes en modo 'score').
