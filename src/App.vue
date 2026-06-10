@@ -15,6 +15,9 @@ import { useBackLayer } from '@closerclick/closer-click-nav/vue'
 import {
   loadLibrary, saveLibrary, getActiveId, setActiveId, genId, hydrateLibrary, type SavedPrediction,
 } from './lib/store'
+import {
+  fetchOfficialFeed, buildOfficial, buildPublishItems, publishOfficial, type Feed,
+} from './lib/officialResults'
 import GroupCard from './components/GroupCard.vue'
 import StandingsTable from './components/StandingsTable.vue'
 import ResultsTab from './components/ResultsTab.vue'
@@ -115,10 +118,14 @@ const activeScopeName = computed(() => scopeName(pred.scope))
 // El modelo de datos ya lo soporta; este flag solo controla su visibilidad en
 // el selector. Poner en true para habilitarlo.
 const BRACKET_SCOPE_ENABLED = false
-// Alcances ofrecidos en el selector (paso 2).
-const SCOPE_OPTIONS = computed<Scope[]>(() =>
-  BRACKET_SCOPE_ENABLED ? ['all', 'groups', 'bracket'] : ['all', 'groups'],
-)
+// Alcances ofrecidos en el selector (paso 2). 'bracket' SIEMPRE se muestra, pero
+// queda DESHABILITADO (no seleccionable) mientras el flag esté en false: así el
+// usuario ve que existe y un aviso de "se habilitará a su debido tiempo".
+const SCOPE_OPTIONS = computed<Scope[]>(() => ['all', 'groups', 'bracket'])
+// ¿Está deshabilitado este alcance en el selector? (solo 'bracket', por ahora.)
+function scopeDisabled (s: Scope): boolean {
+  return s === 'bracket' && !BRACKET_SCOPE_ENABLED
+}
 // Pestañas válidas según el alcance del pronóstico activo.
 function tabAllowed (target: Tab): boolean {
   if (target === 'resultados') return pred.mode !== 'manual' && pred.scope !== 'bracket'
@@ -522,6 +529,83 @@ function ensureOfficialEntry () {
   saveLibrary(library.value)
 }
 
+// ---- Resultados oficiales en vivo (relay results.closer.click) ------------
+// El relay centraliza ESPN + FIFA (+ overrides manuales firmados) y FIRMA el
+// feed. Acá lo traemos, verificamos la firma contra la pubkey pineada y lo
+// aplicamos a la entrada oficial (base de comparación de todos los puntajes,
+// que se recalculan solos). La app NUNCA pega a ESPN/FIFA: solo al relay.
+const officialFeed = ref<Feed | null>(null)
+const officialStatus = ref<'idle' | 'loading' | 'ok' | 'offline'>('idle')
+const officialUpdatedAt = ref(0)
+const publishStatus = ref<'idle' | 'publishing' | 'ok' | 'error' | 'unauthorized' | 'nochange'>('idle')
+let officialPoll: number | null = null
+
+function applyOfficialBuild (build: ReturnType<typeof buildOfficial>): boolean {
+  ensureOfficialEntry()
+  const off = library.value.find((p) => p.official)
+  if (!off) return false
+  const newResults = JSON.parse(JSON.stringify(build.results)) as Prediction['results']
+  if (off.code === build.code && JSON.stringify(off.results ?? {}) === JSON.stringify(newResults)) return false
+  off.results = newResults
+  off.code = build.code
+  off.mode = 'score'
+  off.scope = 'all'
+  off.updatedAt = Date.now()
+  // Si la entrada oficial está activa, refrescamos también la vista en vivo.
+  if (activeEntry.value?.id === off.id) {
+    loading = true
+    try { applyPrediction(decodePrediction(off.code)) } catch { /* code inválido: dejamos la vista */ }
+    pred.mode = 'score'; pred.scope = 'all'
+    pred.results = JSON.parse(JSON.stringify(off.results))
+    nextTick(() => { loading = false })
+  }
+  saveLibrary(library.value)
+  library.value = [...library.value] // fuerza recálculo de computeds (officialEntry/scores)
+  return true
+}
+
+// Trae el feed del relay y lo aplica. `force`: aplica aunque la entrada oficial
+// esté activa (botón/arranque). Sin force (polling) NO pisa la edición del admin.
+async function refreshOfficial (force = false): Promise<void> {
+  officialStatus.value = 'loading'
+  const sf = await fetchOfficialFeed()
+  if (!sf) { officialStatus.value = 'offline'; return }
+  officialFeed.value = sf.data
+  officialUpdatedAt.value = sf.data.updatedAt || Date.now()
+  if (force || !activeEntry.value?.official) applyOfficialBuild(buildOfficial(sf.data))
+  officialStatus.value = 'ok'
+}
+
+// Publica las correcciones manuales (lo que DIFIERE del proveedor) firmadas por
+// el vault del admin. Solo el admin (pubkey en la allowlist del relay) es aceptado.
+async function publishOfficialResults (): Promise<void> {
+  if (!officialFeed.value) await refreshOfficial(true)
+  if (!officialFeed.value) { publishStatus.value = 'error'; return }
+  const items = buildPublishItems(pred, officialFeed.value)
+  if (!items.length) { publishStatus.value = 'nochange'; return }
+  publishStatus.value = 'publishing'
+  const idi = await getIdentity()
+  if (!idi) { publishStatus.value = 'error'; return }
+  const r = await publishOfficial(items, idi)
+  if (r.ok) { publishStatus.value = 'ok'; await refreshOfficial(true) }
+  else if (r.status === 403) publishStatus.value = 'unauthorized'
+  else publishStatus.value = 'error'
+}
+
+function officialHasLive (): boolean {
+  return !!officialFeed.value?.matches?.some((m) => m.status === 'in')
+}
+function scheduleOfficialPoll (): void {
+  if (officialPoll != null) { clearTimeout(officialPoll); officialPoll = null }
+  if (typeof document !== 'undefined' && document.hidden) return
+  const delay = officialHasLive() ? 60_000 : 5 * 60_000
+  officialPoll = window.setTimeout(async () => { await refreshOfficial(false); scheduleOfficialPoll() }, delay)
+}
+function onOfficialVisibility (): void {
+  if (document.hidden) { if (officialPoll != null) { clearTimeout(officialPoll); officialPoll = null } }
+  else { void refreshOfficial(false); scheduleOfficialPoll() }
+}
+
 function uniqueName () {
   const n = library.value.filter((p) => p.mine).length + 1
   return t('store.defaultName', { n })
@@ -598,6 +682,7 @@ function pickerBack () {
 }
 // Paso 2: elegir scope → crea o clona y cierra.
 function pickScope (scope: Scope) {
+  if (scopeDisabled(scope)) return // 'bracket' aún no habilitado
   const p = typePicker.value
   typePicker.value = null
   if (!p || !p.mode) return
@@ -853,10 +938,17 @@ onMounted(async () => {
       if (activeId.value && library.value.some((p) => p.id === activeId.value)) select(activeId.value)
     })
     .catch(() => { /* sin nube, seguimos local */ })
+
+  // Resultados oficiales en vivo: traer del relay al abrir y mantener al día
+  // (poll mientras la página esté visible; más seguido si hay partido en juego).
+  void refreshOfficial(true).then(scheduleOfficialPoll)
+  document.addEventListener('visibilitychange', onOfficialVisibility)
 })
 
 onUnmounted(() => {
   window.removeEventListener('hashchange', onHashChange)
+  document.removeEventListener('visibilitychange', onOfficialVisibility)
+  if (officialPoll != null) clearTimeout(officialPoll)
   inbox?.stop()
   stopSync()
 })
@@ -1058,7 +1150,18 @@ onUnmounted(() => {
       </section>
 
       <section v-show="tab === 'resultados' && pred.mode !== 'manual'" class="scrolly" data-testid="zone-resultados">
-        <ResultsTab :pred="pred" :readonly="readonly" :official="isOfficial ? null : officialEntry" />
+        <ResultsTab
+          :pred="pred"
+          :readonly="readonly"
+          :official="isOfficial ? null : officialEntry"
+          :is-official="isOfficial"
+          :official-status="officialStatus"
+          :official-feed="officialFeed"
+          :official-updated-at="officialUpdatedAt"
+          :publish-status="publishStatus"
+          @refresh-official="refreshOfficial(true)"
+          @publish-official="publishOfficialResults"
+        />
       </section>
 
       <section v-show="tab === 'llaves'" data-testid="zone-llaves">
@@ -1166,11 +1269,14 @@ onUnmounted(() => {
             v-for="s in SCOPE_OPTIONS"
             :key="s"
             class="type-opt"
+            :class="{ 'type-opt-disabled': scopeDisabled(s) }"
             :data-testid="'scope-' + s"
+            :disabled="scopeDisabled(s)"
             @click="pickScope(s)"
           >
             <strong>{{ scopeName(s) }}</strong>
             <span>{{ s === 'groups' ? t('scopes.groupsDesc') : s === 'bracket' ? t('scopes.bracketDesc') : t('scopes.allDesc') }}</span>
+            <span v-if="scopeDisabled(s)" class="type-opt-soon">{{ t('scopes.bracketSoon') }}</span>
           </button>
         </template>
       </div>
@@ -1396,6 +1502,14 @@ onUnmounted(() => {
 .type-opt:hover { border-color: var(--azure); background: var(--panel-2); }
 .type-opt strong { color: var(--azure); }
 .type-opt span { color: var(--muted); font-size: 0.78rem; }
+/* Alcance aún no habilitado: visible pero apagado y no seleccionable. */
+.type-opt-disabled { cursor: not-allowed; opacity: 0.55; }
+.type-opt-disabled:hover { border-color: var(--line); background: var(--bg); }
+.type-opt-disabled strong { color: var(--muted); }
+.type-opt-soon {
+  margin-top: 0.2rem; font-weight: 600; color: var(--azure) !important;
+  font-size: 0.74rem !important;
+}
 .type-modal .x {
   position: absolute; top: 0.5rem; right: 0.7rem; background: none; border: none;
   color: var(--muted); font-size: 1.5rem; cursor: pointer; line-height: 1;

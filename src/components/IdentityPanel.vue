@@ -29,6 +29,19 @@ const unreachable = ref(false)
 const myNick = ref('')
 const myPubkey = computed(() => id.value?.me?.publickey ?? null)
 
+// Copiar la clave pública COMPLETA del vault (el perfil solo muestra la corta).
+// Sirve, p.ej., para registrarse como admin de resultados oficiales en el relay.
+const copiedKey = ref(false)
+async function copyMyPubkey (): Promise<void> {
+  const pk = myPubkey.value
+  if (!pk) return
+  try {
+    await navigator.clipboard.writeText(pk)
+    copiedKey.value = true
+    setTimeout(() => { copiedKey.value = false }, 2000)
+  } catch { /* clipboard no disponible: el usuario puede seleccionar el texto */ }
+}
+
 const contacts = ref<PeerInfo[]>([])
 const peers = ref<PeerInfo[]>([])
 const newToken = ref('')
@@ -235,6 +248,14 @@ async function removeContact (pk: string) {
         ></closer-click-profile>
         <p class="hint">{{ t('identity.nickHint') }}</p>
 
+        <!-- Copiar la clave pública completa (el perfil solo muestra la corta). -->
+        <div v-if="myPubkey" class="copy-key">
+          <button class="copy-key-btn" @click="copyMyPubkey">
+            {{ copiedKey ? t('identity.copied') : t('identity.copyPubkey') }}
+          </button>
+          <code class="copy-key-val">{{ myPubkey }}</code>
+        </div>
+
         <!-- Notificaciones push -->
         <div class="notif">
           <div class="notif-row">
@@ -360,6 +381,17 @@ h3 { color: var(--azure); margin-bottom: 0.8rem; }
 .mono { font-family: monospace; font-size: 0.82rem; }
 .mono.sm { font-size: 0.68rem; color: var(--muted); }
 .hint { font-size: 0.78rem; color: var(--muted); margin-top: 0.5rem; }
+.copy-key { margin-top: 0.6rem; display: flex; flex-direction: column; gap: 0.35rem; }
+.copy-key-btn {
+  align-self: flex-start; background: transparent; color: var(--azure, #41b4ff);
+  border: 1px solid var(--azure, #41b4ff); border-radius: 50px;
+  padding: 0.35rem 0.85rem; cursor: pointer; font-family: inherit; font-weight: 700; font-size: 0.78rem;
+}
+.copy-key-btn:hover { background: rgba(65, 180, 255, 0.16); }
+.copy-key-val {
+  font-size: 0.66rem; color: var(--muted); word-break: break-all; line-height: 1.3;
+  background: rgba(255,255,255,0.04); border-radius: 8px; padding: 0.4rem 0.55rem;
+}
 .focus-note {
   font-size: 0.8rem; color: var(--azure); background: rgba(65, 180, 255, 0.1);
   border: 1px solid var(--azure); border-radius: 8px; padding: 0.5rem 0.7rem; margin-bottom: 0.7rem;

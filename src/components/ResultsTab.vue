@@ -12,6 +12,7 @@ import { decodePrediction } from '../lib/codec'
 import { R32, R16, QF, SF, FINAL, THIRD_PLACE, type Slot } from '../lib/bracket'
 import { formatLocal, kickoffUTC } from '../lib/schedule'
 import type { SavedPrediction } from '../lib/store'
+import { sourceSummary, type Feed } from '../lib/officialResults'
 
 const { t, locale } = useI18n()
 
@@ -33,7 +34,33 @@ function kickoff (key: number): string | null {
   return formatLocal(key, locale.value)
 }
 
-const props = defineProps<{ pred: Prediction; readonly?: boolean; official?: SavedPrediction | null }>()
+const props = defineProps<{
+  pred: Prediction; readonly?: boolean; official?: SavedPrediction | null
+  // Solo cuando se edita la entrada de "Resultados oficiales": habilita traer del
+  // relay y publicar correcciones manuales (firmadas por el vault).
+  isOfficial?: boolean
+  officialStatus?: 'idle' | 'loading' | 'ok' | 'offline'
+  officialFeed?: Feed | null
+  officialUpdatedAt?: number
+  publishStatus?: 'idle' | 'publishing' | 'ok' | 'error' | 'unauthorized' | 'nochange'
+}>()
+const emit = defineEmits<{ (e: 'refresh-official'): void; (e: 'publish-official'): void }>()
+
+// Procedencia de los resultados oficiales (proveedores activos + overrides).
+const officialSources = computed(() => (props.officialFeed ? sourceSummary(props.officialFeed) : null))
+const officialWhen = computed(() => (props.officialUpdatedAt
+  ? new Date(props.officialUpdatedAt).toLocaleString(locale.value, { dateStyle: 'short', timeStyle: 'short' })
+  : ''))
+const publishMsg = computed(() => {
+  switch (props.publishStatus) {
+    case 'publishing': return t('results.publishing')
+    case 'ok': return t('results.published')
+    case 'nochange': return t('results.publishNoChange')
+    case 'unauthorized': return t('results.publishUnauthorized')
+    case 'error': return t('results.publishError')
+    default: return ''
+  }
+})
 
 // Solo en modo 'score' mostramos los inputs de goles.
 const showGoals = computed(() => props.pred.mode === 'score')
@@ -258,11 +285,9 @@ function clearAll (): void {
   props.pred.results = {}
 }
 
-// Obtener resultados oficiales. PLACEHOLDER a futuro: cuando empiece el Mundial
-// aquí se traerán los datos reales. Por ahora solo avisa; NO toca los datos.
-function fetchOfficial (): void {
-  alert(t('results.officialSim'))
-}
+// Traer / publicar resultados oficiales lo maneja App (relay results.closer.click):
+// acá solo emitimos. `refresh-official` trae+aplica del relay; `publish-official`
+// firma con el vault del admin las correcciones manuales y las sube.
 </script>
 
 <template>
@@ -271,8 +296,28 @@ function fetchOfficial (): void {
     <div v-if="!readonly" class="util-bar">
       <button class="util" @click="fillRandom">{{ t('results.random') }}</button>
       <button class="util" @click="clearAll">{{ t('results.clear') }}</button>
-      <button class="util official" @click="fetchOfficial">{{ t('results.official') }}</button>
+      <!-- Solo en la entrada de Resultados oficiales: traer del relay / publicar. -->
+      <template v-if="isOfficial">
+        <button class="util official" :disabled="officialStatus === 'loading'" @click="emit('refresh-official')">
+          {{ officialStatus === 'loading' ? t('results.officialLoading') : t('results.officialRefresh') }}
+        </button>
+        <button class="util publish" :disabled="publishStatus === 'publishing'" @click="emit('publish-official')">
+          {{ t('results.officialPublish') }}
+        </button>
+      </template>
     </div>
+
+    <!-- Procedencia + estado de los resultados oficiales (de dónde vienen). -->
+    <template v-if="isOfficial">
+      <p v-if="officialSources" class="src-line">
+        <span class="src-lbl">{{ t('results.officialSourceLabel') }}</span>
+        <span v-for="s in officialSources.providers" :key="s.id" class="src-chip" :class="{ off: !s.ok }">{{ s.label }}</span>
+        <span v-if="officialSources.overrides" class="src-chip manual">{{ t('results.officialManual', { n: officialSources.overrides }) }}</span>
+        <span v-if="officialWhen" class="src-when">· {{ t('results.officialUpdated', { when: officialWhen }) }}</span>
+      </p>
+      <p v-if="officialStatus === 'offline'" class="src-line warn">{{ t('results.officialOffline') }}</p>
+      <p v-if="publishMsg" class="src-line" :class="{ warn: publishStatus === 'error' || publishStatus === 'unauthorized' }">{{ publishMsg }}</p>
+    </template>
 
     <p class="tab-hint">
       <template v-if="readonly">{{ t('results.hintReadonly') }}</template>
@@ -464,6 +509,24 @@ function fetchOfficial (): void {
 .util:hover { background: rgba(255, 255, 255, 0.06); color: var(--text); }
 .util.official { color: var(--azure); border-color: var(--azure); }
 .util.official:hover { background: rgba(65, 180, 255, 0.18); color: var(--azure); }
+.util.publish { color: var(--lime, #b6e34a); border-color: var(--lime, #b6e34a); }
+.util.publish:hover { background: rgba(182, 227, 74, 0.16); }
+.util:disabled { opacity: 0.5; cursor: default; }
+
+/* Procedencia de los resultados oficiales (de dónde vienen los valores). */
+.src-line {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem;
+  margin: 0.1rem 0 0.4rem; font-size: 0.78rem; color: var(--muted);
+}
+.src-line.warn { color: #ffb454; }
+.src-lbl { font-weight: 700; }
+.src-chip {
+  border: 1px solid var(--line); border-radius: 50px; padding: 0.05rem 0.5rem;
+  font-weight: 700; font-size: 0.72rem; color: var(--azure); border-color: var(--azure);
+}
+.src-chip.off { color: var(--muted); border-color: var(--line); text-decoration: line-through; }
+.src-chip.manual { color: var(--lime, #b6e34a); border-color: var(--lime, #b6e34a); }
+.src-when { opacity: 0.8; }
 
 .tab-hint { color: var(--muted); font-size: 0.83rem; margin-bottom: 0.9rem; text-align: center; }
 .no-data {
