@@ -7,6 +7,19 @@ import '@closerclick/closer-click-share'
 import { createBackNav } from '@closerclick/closer-click-nav'
 import { i18n } from './i18n'
 import { initAnalytics } from './lib/analytics'
+import { registerSW } from 'virtual:pwa-register'
+
+// SW con auto-actualización REAL: sin esto el plugin solo registra el SW y la
+// versión nueva recién se ve en la SIGUIENTE visita (en la PWA instalada de
+// móvil, nunca, porque no se "re-visita"). registerSW recarga la página cuando
+// el SW nuevo toma control y además re-chequea actualizaciones cada 30 min.
+registerSW({
+  immediate: true,
+  onRegisteredSW (_swUrl, reg) {
+    if (!reg) return
+    setInterval(() => { reg.update().catch(() => {}) }, 30 * 60_000)
+  },
+})
 
 // Navegación "volver" unificada del ecosistema (botón físico de Android / gesto
 // de iOS / atrás del navegador / chevron del header → cierra modal/panel; si no
