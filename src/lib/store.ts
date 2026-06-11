@@ -10,6 +10,29 @@ export interface SavedAuthor {
   verified: boolean
 }
 
+/** Sello de tiempo PERSISTENTE de un pronóstico propio (TSA signer.closer.click).
+ *  Se crea con el botón "Sellar" (o implícitamente al compartir) y queda guardado
+ *  con el código EXACTO que se selló: si `code` del entry cambia (se editó), el
+ *  sello queda obsoleto hasta volver a sellar (o cancelar la edición). Al
+ *  compartir/aportar a una sala se REUTILIZA, así la fecha certificada es la del
+ *  último sellado y no la de cada compartida. */
+export interface SavedSeal {
+  /** instante del sellado (ms epoch, reloj del sellador) */
+  ts: number
+  /** firma del sellador (base64url, 64 bytes ECDSA P-256 r‖s) */
+  sig: string
+  /** código del pronóstico que se selló (si difiere del actual, no aplica) */
+  code: string
+}
+
+/** Sello del TSA de UN pick del pronóstico de la fecha (ver matchday.ts):
+ *  certifica que ese marcador, de este autor, existió en `ts` (antes del
+ *  kickoff si se selló a tiempo). `sig` en base64url (64 bytes r‖s). */
+export interface MatchSealRecord {
+  ts: number
+  sig: string
+}
+
 export interface SavedPrediction {
   id: string
   name: string
@@ -20,10 +43,17 @@ export interface SavedPrediction {
   mine: boolean
   /** true = entrada de RESULTADOS oficiales (única; sección aparte en la barra). */
   official?: boolean
+  /** true = el pronóstico DE LA FECHA (único por cuenta; sección propia, no
+   *  aparece en la lista de pronósticos clásicos). Ver matchday.ts. */
+  daily?: boolean
+  /** Sellos POR PARTIDO del pronóstico de la fecha (id interno → sello). */
+  dailySeals?: Record<number, MatchSealRecord>
   author?: SavedAuthor
   /** Enlace original firmado (solo importados): se reusa al compartir/imprimir
    *  un pronóstico ajeno, sin re-firmarlo con la identidad propia. */
   sharedUrl?: string
+  /** Sello de tiempo guardado (solo propios). Ver SavedSeal. */
+  seal?: SavedSeal
   // Datos de resultados (solo locales; no viajan en el código compartido).
   mode?: GameMode
   // Alcance del pronóstico (grupos/llaves/ambas). El código ya lo lleva, pero se
@@ -51,16 +81,27 @@ export function loadLibrary (): SavedPrediction[] {
   } catch { return [] }
 }
 
+// Marca de versión del registro para el sync: sellar NO bumpea updatedAt (para
+// que un autosellado en un dispositivo desactualizado no gane el LWW de
+// contenido), así que el ts del registro incluye el sello para que igual se suba.
+function recordTs (p: SavedPrediction): number {
+  return Math.max(p.updatedAt || 0, p.seal?.ts || 0)
+}
+
 export function saveLibrary (list: SavedPrediction[]): void {
   try { localStorage.setItem(LIB_KEY, JSON.stringify(list)) } catch { /* */ }
   // Espejo en la nube (fire-and-forget; no bloquea ni rompe si el store no está).
-  void syncThread(THREAD_PREDICTIONS, list.map((p) => ({ id: p.id, ts: p.updatedAt, data: p })))
+  void syncThread(THREAD_PREDICTIONS, list.map((p) => ({ id: p.id, ts: recordTs(p), data: p })))
 }
 
 /**
  * Trae los pronósticos del store del ecosistema y los fusiona con la lista local
  * (last-writer-wins por `updatedAt`). Devuelve la lista fusionada y si cambió.
  * Pensado para correr en segundo plano al arrancar (no bloquea el render).
+ * El SELLO se fusiona aparte del contenido: como sellar no bumpea updatedAt, el
+ * lado que pierde el LWW puede traer un sello que el ganador no tiene; si ese
+ * sello corresponde al código del ganador (mismo code) se conserva, prefiriendo
+ * siempre el más antiguo (la fecha certificada más temprana es la que vale).
  */
 export async function hydrateLibrary (local: SavedPrediction[]): Promise<{ list: SavedPrediction[]; changed: boolean }> {
   const remote = await pullThread<SavedPrediction>(THREAD_PREDICTIONS)
@@ -70,7 +111,17 @@ export async function hydrateLibrary (local: SavedPrediction[]): Promise<{ list:
   for (const r of remote) {
     if (!r?.id) continue
     const cur = byId.get(r.id)
-    if (!cur || (r.updatedAt || 0) > (cur.updatedAt || 0)) { byId.set(r.id, r); changed = true }
+    if (!cur) { byId.set(r.id, r); changed = true; continue }
+    const remoteWins = (r.updatedAt || 0) > (cur.updatedAt || 0)
+    const winner = remoteWins ? r : cur
+    const loser = remoteWins ? cur : r
+    const ls = loser.seal
+    if (ls && ls.code === winner.code &&
+        (!winner.seal || winner.seal.code !== winner.code || ls.ts < winner.seal.ts)) {
+      winner.seal = ls
+      changed = true
+    }
+    if (remoteWins) { byId.set(r.id, r); changed = true }
   }
   return { list: [...byId.values()], changed }
 }

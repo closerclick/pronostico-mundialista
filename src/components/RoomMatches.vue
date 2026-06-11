@@ -3,7 +3,11 @@
 // por orden cronológico + eliminatorias por ronda), columnas = el resultado
 // OFICIAL y el pronóstico de cada miembro. Verde = acertó el 1X2 / quién
 // avanza; verde fuerte = marcador exacto. Los sellados se ven como 🔒.
-import { computed } from 'vue'
+//
+// SALAS DE LA FECHA (`daily`): cada partido se revela al KICKOFF (antes, los
+// picks ajenos se ven 🔒); los aciertos solo pintan si el pick tiene sello por
+// partido VERIFICADO anterior al kickoff (⚠ = pick sin prueba, no puntúa).
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Room, RoomMember } from '../lib/roomStore'
 import { isMemberSealed } from '../lib/roomStore'
@@ -16,6 +20,7 @@ import {
 } from '../lib/standings'
 import { R32, R16, QF, SF, THIRD_PLACE, FINAL } from '../lib/bracket'
 import { kickoffUTC } from '../lib/schedule'
+import { scoreMatchdayPicks, nowMs, type MatchdayScore } from '../lib/matchday'
 
 const { t } = useI18n()
 
@@ -23,7 +28,15 @@ const props = defineProps<{
   room: Room
   official: SavedPrediction | null
   myPubkey: string | null
+  /** Sala del pronóstico de la FECHA (ver cabecera). */
+  daily?: boolean
 }>()
+
+// Reloj vivo (salas de la fecha): destapa los picks al llegar el kickoff.
+const now = ref(nowMs())
+let tick: number | null = null
+onMounted(() => { tick = window.setInterval(() => { now.value = nowMs() }, 30_000) })
+onUnmounted(() => { if (tick != null) clearInterval(tick) })
 
 interface Col {
   member: RoomMember
@@ -31,6 +44,8 @@ interface Col {
   isMe: boolean
   pred: Prediction | null
   resolved: Map<number, { winner: number | null }> | null
+  /** puntaje por partido de la fecha (solo salas daily) */
+  dscore: MatchdayScore | null
 }
 
 const cols = computed<Col[]>(() =>
@@ -40,10 +55,11 @@ const cols = computed<Col[]>(() =>
     if (pred && m.results) pred.results = m.results
     return {
       member: m,
-      sealed: isMemberSealed(props.room, m, props.myPubkey),
+      sealed: props.daily ? false : isMemberSealed(props.room, m, props.myPubkey),
       isMe: m.publickey === props.myPubkey,
       pred,
       resolved: pred ? resolveMatches(pred) : null,
+      dscore: props.daily ? scoreMatchdayPicks(m.results, m.proof, props.official, true) : null,
     }
   }),
 )
@@ -73,11 +89,31 @@ function fmtResult (r: MatchResult | undefined): string {
 // ¿fmtResult devolvió un marcador (y no un 1/X/2)?
 const isScoreText = (s: string) => !!s && !['1', 'X', '2'].includes(s)
 
-interface Cell { text: string; hit: boolean; exact: boolean; sealed: boolean }
+interface Cell { text: string; hit: boolean; exact: boolean; sealed: boolean; unproven?: boolean }
 const SEALED_CELL: Cell = { text: '🔒', hit: false, exact: false, sealed: true }
 const EMPTY: Cell = { text: '', hit: false, exact: false, sealed: false }
 
+// Celda de una sala de la FECHA: pick = marcador del miembro para ese partido.
+// Antes del kickoff los picks AJENOS van tapados; después, el acierto solo
+// pinta si el sello por partido probó el pick a tiempo (si no, ⚠ y 0 puntos).
+function dailyCell (c: Col, id: number): Cell {
+  const r = c.member.results?.[id]
+  if (!r) return EMPTY
+  const iso = kickoffUTC(id)
+  const started = iso != null && now.value >= Date.parse(iso)
+  if (!started && !c.isMe) return SEALED_CELL
+  let text = fmtResult(r)
+  // Eliminatoria con definición: anexa quién avanza según el pick.
+  const ms = c.dscore?.per.get(id)
+  const proven = !!ms?.counted
+  const hit = !!started && proven && !!ms && (ms.outcome || ms.advance)
+  const exact = !!started && proven && !!ms?.exact
+  if (started && !proven) text += ' ⚠'
+  return { text, hit: hit && !exact, exact, sealed: false, unproven: started && !proven }
+}
+
 function groupCell (c: Col, idx: number): Cell {
+  if (props.daily) return dailyCell(c, idx)
   if (c.sealed) return SEALED_CELL
   const r = c.pred?.results[idx]
   if (!r) return EMPTY
@@ -91,6 +127,7 @@ function groupCell (c: Col, idx: number): Cell {
 }
 
 function koCell (c: Col, num: number): Cell {
+  if (props.daily) return dailyCell(c, num)
   if (c.sealed) return SEALED_CELL
   const winner = c.resolved?.get(num)?.winner ?? null
   if (winner == null) return EMPTY
@@ -122,7 +159,9 @@ const visibleSections = computed<Section[]>(() => {
       const away = teamAt(g, pair[1]!)
       const official = fmtResult(officialResults.value[idx])
       const cells = cs.map((c) => groupCell(c, idx))
-      if (!official && !cells.some((c) => c.text && !c.sealed)) continue
+      // En salas de la fecha, una celda tapada (🔒) igual hace visible la fila:
+      // muestra que alguien ya pronosticó el partido que viene.
+      if (!official && !cells.some((c) => c.text && (!c.sealed || props.daily))) continue
       rows.push({ key: 'g' + idx, label: `${flag(home)} ${code(home)} – ${code(away)} ${flag(away)}`, official, cells })
     }
     if (rows.length) out.push({ title: t('group.title', { letter: GROUPS[g]!.letter }), rows })
@@ -140,7 +179,7 @@ const visibleSections = computed<Section[]>(() => {
       const oScore = fmtResult(officialResults.value[num])
       const official = ow != null ? code(ow) + (isScoreText(oScore) ? ` ${oScore}` : '') : ''
       const cells = cs.map((c) => koCell(c, num))
-      if (!official && !cells.some((c) => c.text && !c.sealed)) continue
+      if (!official && !cells.some((c) => c.text && (!c.sealed || props.daily))) continue
       rows.push({ key: 'k' + num, label, official, cells })
     }
     if (rows.length) out.push({ title, rows })
@@ -181,7 +220,7 @@ const headerName = (m: RoomMember) => m.nickname || t('common.anonymous')
             <td class="match">{{ row.label }}</td>
             <td class="of">{{ row.official }}</td>
             <td v-for="(cell, ci) in row.cells" :key="ci" class="cell"
-                :class="{ hit: cell.hit && !cell.exact, exact: cell.exact, me: cols[ci]!.isMe }">
+                :class="{ hit: cell.hit && !cell.exact, exact: cell.exact, me: cols[ci]!.isMe, unproven: cell.unproven }">
               {{ cell.text }}
             </td>
           </tr>
@@ -191,6 +230,10 @@ const headerName = (m: RoomMember) => m.nickname || t('common.anonymous')
     <p v-if="visibleSections.length" class="legend">
       <span class="chip hit">{{ t('rooms.legendHit') }}</span>
       <span class="chip exact">{{ t('rooms.legendExact') }}</span>
+      <template v-if="daily">
+        <span class="chip">🔒 {{ t('rooms.dailyLegendLocked') }}</span>
+        <span class="chip warn">⚠ {{ t('rooms.dailyNotProven') }}</span>
+      </template>
     </p>
   </div>
 </template>
@@ -215,7 +258,9 @@ th.match-h { z-index: 3; }
 .cell.exact { background: rgba(78, 222, 128, 0.30); color: var(--green); font-weight: 800; }
 .you { font-size: 0.58rem; background: var(--azure); color: #042038; border-radius: 5px; padding: 0 0.25rem; font-weight: 800; margin-left: 0.3rem; }
 .legend { display: flex; gap: 0.5rem; margin-top: 0.5rem; font-size: 0.72rem; }
-.chip { border-radius: 5px; padding: 0.1rem 0.45rem; }
+.chip { border-radius: 5px; padding: 0.1rem 0.45rem; color: var(--muted); background: rgba(255, 255, 255, 0.05); }
 .chip.hit { background: rgba(78, 222, 128, 0.14); color: var(--green); }
 .chip.exact { background: rgba(78, 222, 128, 0.30); color: var(--green); font-weight: 700; }
+.chip.warn { background: rgba(255, 207, 63, 0.12); color: var(--gold); }
+.cell.unproven { color: var(--gold); }
 </style>

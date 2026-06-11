@@ -11,6 +11,7 @@
 
 import { signBlob, verifyBlob, parseShareFragment, SHARE_BASE } from './share'
 import { decodePrediction } from './codec'
+import { verifyMatchPick } from './matchday'
 import type { Room, RoomMode, RoomScope, RoomMember } from './roomStore'
 
 export const ROOM_PAYLOAD_VERSION = 2
@@ -30,6 +31,7 @@ interface RoomDescriptor {
   sc?: RoomScope // alcance exigido (opcional; ausente = 'free' en invitaciones legacy)
   s: number // sealedUntil (0 = visible)
   c: number // createdAt
+  d?: 1 // sala del PRONÓSTICO DE LA FECHA (clientes viejos ignoran el campo)
 }
 
 /** Datos mínimos del creador para construir la invitación. */
@@ -40,11 +42,13 @@ export interface RoomInit {
   scope: RoomScope
   sealedUntil: number
   createdAt: number
+  daily?: boolean
 }
 
 /** Firma el descriptor de la sala y arma el enlace de invitación. */
 export async function buildRoomInviteUrl (init: RoomInit): Promise<{ url: string; hostPubkey: string; hostNick?: string }> {
   const desc: RoomDescriptor = { i: init.id, n: init.name.slice(0, 60), m: init.mode, sc: init.scope, s: init.sealedUntil, c: init.createdAt }
+  if (init.daily) desc.d = 1
   const { blob, publickey, nickname } = await signBlob(JSON.stringify(desc), ROOM_PAYLOAD_VERSION)
   return { url: `${SHARE_BASE}#${ROOM_INVITE_PREFIX}${blob}`, hostPubkey: publickey, hostNick: nickname }
 }
@@ -58,6 +62,7 @@ export interface ParsedRoomInvite {
   createdAt: number
   hostPubkey: string
   verified: boolean
+  daily: boolean
 }
 
 /** Lee y verifica el descriptor de sala de un fragmento `room=<blob>`. */
@@ -77,6 +82,7 @@ export async function parseRoomInvite (frag: string): Promise<ParsedRoomInvite |
     createdAt: Number(desc.c) || Date.now(),
     hostPubkey: res.publickey,
     verified: res.verified,
+    daily: desc.d === 1,
   }
 }
 
@@ -101,11 +107,18 @@ export async function parseRoomInvite (frag: string): Promise<ParsedRoomInvite |
 export const MEMBER_ENV_VERSION = 3
 export const MEMBER_FWD_VERSION = 4
 
-interface MemberEnv { r: string; f?: string; d?: 1; t: number; s?: string; n?: string }
+// `ds` (opcional, salas de la FECHA): sellos POR PARTIDO del TSA — id interno →
+// { t: ts, s: firma b64url } — atados al marcador aportado y al autor. Clientes
+// viejos lo ignoran (JSON con campo extra) sin romper nada.
+export type DailySealsWire = Record<number, { t: number; s: string }>
 
-/** Firma el sobre de contribución (mi pronóstico) para una sala. */
-export async function buildMemberEnvelope (roomId: string, frag: string, ts: number): Promise<string> {
+interface MemberEnv { r: string; f?: string; d?: 1; t: number; s?: string; n?: string; ds?: DailySealsWire }
+
+/** Firma el sobre de contribución (mi pronóstico) para una sala. `dailySeals`:
+ *  sellos por partido (solo salas de la fecha). */
+export async function buildMemberEnvelope (roomId: string, frag: string, ts: number, dailySeals?: DailySealsWire): Promise<string> {
   const env: MemberEnv = { r: roomId, f: frag, t: ts }
+  if (dailySeals && Object.keys(dailySeals).length) env.ds = dailySeals
   const { blob } = await signBlob(JSON.stringify(env), MEMBER_ENV_VERSION)
   return blob
 }
@@ -180,6 +193,20 @@ export async function memberFromEnvelope (envBlob: string): Promise<ParsedMember
   if (!env.f) return null
   const m = await memberFromFrag(env.f)
   if (!m) return null
+  // Sellos por partido (salas de la fecha): se VERIFICAN aquí, uno a uno, contra
+  // el TSA pineado + el marcador aportado + la pubkey del AUTOR del frag. Solo
+  // los válidos entran a `proof`; un sello falso/ajeno simplemente no prueba nada.
+  if (env.ds && typeof env.ds === 'object') {
+    const proof: Record<number, number> = {}
+    const entries = Object.entries(env.ds).slice(0, 128)
+    for (const [k, sl] of entries) {
+      const id = Number(k)
+      const r = m.results?.[id]
+      if (!r || !sl || typeof sl.t !== 'number' || typeof sl.s !== 'string') continue
+      if (await verifyMatchPick(id, r, m.publickey, { ts: sl.t, sig: sl.s })) proof[id] = sl.t
+    }
+    if (Object.keys(proof).length) m.proof = proof
+  }
   if (isFwd) {
     // La confianza viene SOLO de la firma del amigo dentro del frag: obligatoria.
     if (!m.verified) return null

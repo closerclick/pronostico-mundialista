@@ -5,6 +5,8 @@ import type { Room, RoomMember } from '../lib/roomStore'
 import { isMemberSealed } from '../lib/roomStore'
 import type { SavedPrediction } from '../lib/store'
 import { scoreEntry } from '../lib/scoring'
+import { scoreMatchdayPicks } from '../lib/matchday'
+import { kickoffUTC } from '../lib/schedule'
 import { shortKey } from '../lib/rating'
 import { TOURNAMENT_START } from '../lib/room'
 import { getReputation } from '../lib/reputation'
@@ -18,13 +20,33 @@ const props = defineProps<{
   room: Room
   official: SavedPrediction | null
   myPubkey: string | null
+  /** Sala del pronóstico de la FECHA: puntaje por partido gateado por sello. */
+  daily?: boolean
 }>()
 const emit = defineEmits<{ (e: 'remove-forward', m: RoomMember): void }>()
 
+// nº de picks del miembro cuyo sello POR PARTIDO verificó y es ANTERIOR al
+// kickoff (solo esos puntúan en salas de la fecha).
+function provenPicks (m: RoomMember): { ok: number; total: number } {
+  const ids = Object.keys(m.results ?? {}).map(Number)
+  let ok = 0
+  for (const id of ids) {
+    const k = kickoffUTC(id)
+    if (m.proof?.[id] != null && k != null && m.proof[id]! <= Date.parse(k)) ok++
+  }
+  return { ok, total: ids.length }
+}
+
 // Sello de tiempo del pronóstico (signer.closer.click): cuándo existió.
-// 'a tiempo' = sellado antes del primer partido.
+// 'a tiempo' = sellado antes del primer partido. En salas de la FECHA el sello
+// es POR PARTIDO: se muestra cuántos picks quedaron probados a tiempo.
 function sealInfo (m: RoomMember): { cls: string; icon: string; text: string } {
   const fmt = (ts: number) => new Date(ts).toLocaleString()
+  if (props.daily) {
+    const { ok, total } = provenPicks(m)
+    const cls = !total ? 'none' : ok === total ? 'ok' : ok > 0 ? 'late' : 'bad'
+    return { cls, icon: ok === total && total > 0 ? '🕓' : total ? '⚠' : '—', text: t('rooms.dailySealedPicks', { ok, total }) }
+  }
   if (m.sealedAt == null) return { cls: 'none', icon: '—', text: t('rooms.sealNone') }
   if (!m.sealValid) return { cls: 'bad', icon: '⚠', text: t('rooms.sealInvalid') }
   if (m.sealedAt < TOURNAMENT_START) return { cls: 'ok', icon: '🕓', text: t('rooms.sealOkAt', { date: fmt(m.sealedAt) }) }
@@ -57,8 +79,13 @@ interface Row { member: RoomMember; sealed: boolean; total: number; isMe: boolea
 
 const rows = computed<Row[]>(() => {
   const out: Row[] = props.room.members.filter((m) => !m.deleted).map((m) => {
-    const sealed = isMemberSealed(props.room, m, props.myPubkey)
-    const total = sealed ? -1 : scoreEntry(asEntry(m), props.official).total
+    // En salas de la fecha no hay sello global de sala: cada partido se revela
+    // al kickoff (la máscara vive en "Partidos") y el puntaje es por partido,
+    // contando SOLO los picks con sello verificado anterior al kickoff.
+    const sealed = props.daily ? false : isMemberSealed(props.room, m, props.myPubkey)
+    const total = props.daily
+      ? scoreMatchdayPicks(m.results, m.proof, props.official, true).total
+      : (sealed ? -1 : scoreEntry(asEntry(m), props.official).total)
     return { member: m, sealed, total, isMe: m.publickey === props.myPubkey }
   })
   // Los sellados al final; el resto por puntaje descendente.
@@ -139,7 +166,8 @@ const profileTheme: Record<string, string> = {
 <template>
   <div class="lb">
     <p v-if="!hasOfficial" class="note">{{ t('rooms.noOfficial') }}</p>
-    <p v-if="sealedActive" class="note sealed">🔒 {{ t('rooms.sealedUntil', { date: sealedDate }) }}</p>
+    <p v-if="daily" class="note">📅 {{ t('rooms.dailyBoardNote') }}</p>
+    <p v-if="!daily && sealedActive" class="note sealed">🔒 {{ t('rooms.sealedUntil', { date: sealedDate }) }}</p>
     <p v-if="!rows.length" class="empty">{{ t('rooms.noMembers') }}</p>
 
     <table v-else class="tbl">

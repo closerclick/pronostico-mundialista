@@ -8,9 +8,12 @@ import {
   confirmStandings, revertDraft, autoConfirmNonBracket, hasPendingChanges, completeness,
   listMissing, type Prediction, type MissingItem,
 } from './lib/prediction'
-import { GROUP_MATCH_COUNT, computeStandings, type GameMode, type Scope, type Results } from './lib/standings'
+import { GROUP_MATCH_COUNT, computeStandings, type GameMode, type Scope, type Results, type MatchResult } from './lib/standings'
 import { encodePrediction, decodePrediction } from './lib/codec'
-import { parseShareFragment, buildShareUrl, getIdentity, SHARE_BASE } from './lib/share'
+import {
+  parseShareFragment, buildShareUrl, sealPredictionCode, getIdentity, SHARE_BASE,
+  bytesToB64url, b64urlToBytes, type PredictionSeal, type IncomingPrediction,
+} from './lib/share'
 import { useBackLayer } from '@closerclick/closer-click-nav/vue'
 import {
   loadLibrary, saveLibrary, getActiveId, setActiveId, genId, hydrateLibrary, type SavedPrediction,
@@ -18,6 +21,10 @@ import {
 import {
   fetchOfficialFeed, buildOfficial, buildPublishItems, publishOfficial, isAdminIdentity, type Feed,
 } from './lib/officialResults'
+import {
+  allFixtures, fixturesToday, fixturePredictable, findDailyEntry, ensureDailyEntry,
+  applyDailyPicks, sealMissingPicks, shouldShowDailyPopup, dismissDailyPopup, nowMs,
+} from './lib/matchday'
 import GroupCard from './components/GroupCard.vue'
 import StandingsTable from './components/StandingsTable.vue'
 import ResultsTab from './components/ResultsTab.vue'
@@ -32,6 +39,8 @@ import ScoringInfo from './components/ScoringInfo.vue'
 import QRCode from 'qrcode'
 import IdentityPanel from './components/IdentityPanel.vue'
 import RoomsPage from './components/RoomsPage.vue'
+import MatchdayPage from './components/MatchdayPage.vue'
+import MatchdayPopup from './components/MatchdayPopup.vue'
 import { fragKind } from './lib/room'
 import { RoomInbox, type IncomingInvite } from './lib/inbox'
 import { startReceipts, reportOpen } from './lib/receipts'
@@ -72,13 +81,13 @@ useBackLayer(scoringOpen)
 useBackLayer(importOpen)
 
 // --- Salas (otra "página": barra lateral + contenido propio) ---------------
-const section = ref<'predictions' | 'rooms'>('predictions')
+const section = ref<'predictions' | 'rooms' | 'fecha'>('predictions')
 const inviteToast = ref<IncomingInvite | null>(null)
 let inbox: RoomInbox | null = null
 const {
   rooms,
   initRooms, importRoomInvite, importMemberContrib, applyEnvelope, openRoom, closeRoom,
-  ensureSync, stopSync, activeRoom, peerCount, syncStatus, roomShareOpen,
+  ensureSync, stopSync, activeRoom, peerCount, syncStatus, roomShareOpen, recontributeDaily,
 } = useRooms()
 
 // Ciclo de sincronización ligado a la sección: solo conectamos al proxy cuando
@@ -158,6 +167,215 @@ function confirmChanges () {
 function cancelChanges () {
   if (readonly.value) return
   revertDraft(pred) // persiste vía el watch profundo de `pred`
+}
+
+// ---- Sellado persistente del pronóstico ------------------------------------
+// El sello (TSA signer.closer.click) certifica CUÁNDO existió el pronóstico y
+// queda GUARDADO en la entrada: se crea con el botón "Sellar" (sin necesidad de
+// compartir) o implícitamente al compartir/aportar a una sala (autosellado), y
+// deja de aplicar al editar (code distinto). Compartir REUTILIZA el sello
+// vigente: la fecha certificada es la del sellado, no la de cada compartida —
+// así un pronóstico viejo no aparece como "sellado tarde" por compartirse tarde.
+
+const sealing = ref(false)
+const sealError = ref(false)
+
+// Estado del sello del pronóstico ACTIVO: sin sello / vigente / obsoleto (editado).
+const sealState = computed<'none' | 'sealed' | 'stale'>(() => {
+  const e = activeEntry.value
+  if (!e?.seal) return 'none'
+  return e.seal.code === e.code ? 'sealed' : 'stale'
+})
+const sealDate = computed(() => {
+  const ts = activeEntry.value?.seal?.ts
+  // Idioma de la APP (no del navegador), como las fechas de ResultsTab.
+  return ts ? new Date(ts).toLocaleString(locale.value, { dateStyle: 'short', timeStyle: 'short' }) : ''
+})
+
+// Sello guardado de una entrada como preset para buildShareUrl (solo si sigue
+// correspondiendo al código que se va a compartir).
+function presetSealFor (entry: SavedPrediction | null | undefined, code: string): PredictionSeal | null {
+  if (!entry?.seal || !entry.mine || entry.official) return null
+  if (entry.seal.code !== code) return null
+  return { ts: entry.seal.ts, sig: b64urlToBytes(entry.seal.sig) }
+}
+
+// Persiste en la entrada el sello usado (botón "Sellar" o autosellado al
+// compartir/imprimir/aportar), para reutilizarlo en las próximas compartidas.
+// OJO: NO bumpea updatedAt — sellar no debe ganar el last-writer-wins de
+// contenido (un dispositivo desactualizado que solo comparte pisaría ediciones
+// más nuevas de otro). El sello viaja a la nube porque el ts del registro es
+// max(updatedAt, seal.ts) (ver saveLibrary) y hydrateLibrary lo fusiona aparte.
+function adoptSeal (entry: SavedPrediction | null | undefined, code: string, seal: PredictionSeal | null) {
+  if (!seal || !entry || !entry.mine || entry.official) return
+  if (entry.code !== code) return // se editó en el medio: el sello no es del estado actual
+  if (entry.seal && entry.seal.code === code && entry.seal.ts === seal.ts) return
+  entry.seal = { ts: seal.ts, sig: bytesToB64url(seal.sig), code }
+  sealError.value = false // un sello conseguido invalida el error de un intento previo
+  saveLibrary(library.value)
+}
+
+// Botón "Sellar": pide el sello del código actual y lo guarda (sin compartir).
+async function sealActive () {
+  const entry = activeEntry.value
+  if (!entry || !entry.mine || entry.official || sealing.value) return
+  sealing.value = true
+  sealError.value = false
+  try {
+    const code = entry.code
+    const seal = await sealPredictionCode(code)
+    if (!seal) { sealError.value = true; return }
+    adoptSeal(entry, code, seal)
+  } finally { sealing.value = false }
+}
+
+// Sellar pasa por el mismo aviso de incompleto que compartir/imprimir (sin
+// exigir apodo: el sello usa la pubkey, no firma el enlace).
+function trySeal () {
+  if (!activeId.value) return
+  guardComplete(activeId.value, () => { void sealActive() })
+}
+
+// "Cancelar edición": descarta TODO lo editado después del sello y vuelve al
+// pronóstico sellado (el código lleva posiciones, llaves y resultados). En modo
+// manual trabaja en conjunto con "Confirmar cambios (afecta las llaves)": los
+// borradores (drafts) no viajan en el código, así que mientras no se confirme
+// el sello sigue vigente y basta "Cancelar cambios". En winlose/score los
+// RESULTADOS sí viajan en el código: el primer marcador tecleado deja el sello
+// obsoleto (aun sin confirmar) y este botón es la única forma de recuperarlo.
+function cancelEdit () {
+  const entry = activeEntry.value
+  if (!entry?.seal || entry.seal.code === entry.code) return
+  let p: Prediction
+  try { p = decodePrediction(entry.seal.code) } catch { return }
+  entry.code = entry.seal.code
+  entry.mode = p.mode
+  entry.scope = p.scope
+  entry.results = p.results
+  entry.draftGroupOrder = p.groupOrder.map((a) => [...a])
+  entry.draftThirdsRank = [...p.thirdsRank]
+  entry.updatedAt = Date.now()
+  saveLibrary(library.value)
+  select(entry.id) // reaplica la vista desde el código restaurado
+}
+
+// Sello a reutilizar en el modal de compartir (el del entry que se comparte).
+const shareSeal = computed(() => {
+  const e = library.value.find((p) => p.id === shareEntryId.value) ?? activeEntry.value
+  return presetSealFor(e, shareCode.value)
+})
+// Autosellado: el modal avisa con el sello usado y el code que realmente selló
+// (capturado antes del await). El guard de adoptSeal (entry.code !== code)
+// descarta el sello si el usuario editó mientras respondía el sellador.
+function onShareSealed (seal: PredictionSeal, code: string) {
+  const e = library.value.find((p) => p.id === shareEntryId.value) ?? activeEntry.value
+  adoptSeal(e, code, seal)
+}
+// Autosellado al aportar a una sala (RoomsPage avisa con el sello usado).
+function onRoomSealed (entryId: string, code: string, seal: PredictionSeal) {
+  adoptSeal(library.value.find((p) => p.id === entryId), code, seal)
+}
+
+// Si un enlace PROPIO importado trae sello válido, lo adopta: al reimportar en
+// otro dispositivo se recupera la fecha certificada original (se conserva
+// siempre el sello más antiguo, que es el que más vale). Devuelve si cambió.
+// `isMine` (autor del enlace == mi identidad) es OBLIGATORIO: el sello viene
+// atado a la pubkey del AUTOR del enlace — sin este gate, el enlace de otra
+// persona con mi mismo code (p. ej. "editar copia" de mi pronóstico, o dos
+// pronósticos por defecto sin editar) inyectaría en mi entrada un sello que
+// jamás verificará contra mi clave.
+function adoptIncomingSeal (entry: SavedPrediction, parsed: IncomingPrediction, isMine: boolean): boolean {
+  if (!isMine || !entry.mine || entry.official || entry.code !== parsed.code) return false
+  if (!parsed.sealValid || parsed.sealedAt == null || !parsed.sealSig) return false
+  if (entry.seal && entry.seal.code === entry.code && entry.seal.ts <= parsed.sealedAt) return false
+  entry.seal = { ts: parsed.sealedAt, sig: bytesToB64url(parsed.sealSig), code: parsed.code }
+  return true
+}
+
+// ---- Pronóstico de la FECHA (partido a partido, día a día) -----------------
+// Entrada ÚNICA por cuenta (flag `daily`; viaja por el store del ecosistema).
+// El popup diario ofrece los partidos de HOY; cada pick guardado se SELLA con
+// el TSA (sello POR PARTIDO: prueba que existió antes del kickoff). La sección
+// "La fecha" permite ver y editar los partidos que aún no se juegan.
+
+const dailyEntry = computed(() => findDailyEntry(library.value))
+
+function ensureDaily () {
+  const { changed } = ensureDailyEntry(library.value, t('daily.entryName'))
+  if (changed) saveLibrary(library.value)
+}
+
+const dailyPopupOpen = ref(false)
+const dailySealing = ref(false)
+const dailySealResult = ref<{ sealed: number; failed: number } | null>(null)
+useBackLayer(dailyPopupOpen)
+
+// Partidos de HOY aún pronosticables (para el popup).
+const dailyTodayMatches = computed(() => {
+  const now = nowMs()
+  return fixturesToday(allFixtures(officialEntry.value), now).filter((f) => fixturePredictable(f, now))
+})
+
+// Guarda y SELLA picks (popup y sección comparten este camino). Tras guardar,
+// refresca en silencio mi aporte en las salas de la fecha donde ya participo.
+async function onDailySave (items: { id: number; r: MatchResult }[]) {
+  ensureDaily()
+  const entry = dailyEntry.value
+  if (!entry || dailySealing.value || !items.length) return
+  dailySealing.value = true
+  try {
+    const res = await applyDailyPicks(entry, items)
+    saveLibrary(library.value)
+    library.value = [...library.value] // recalcula computeds que leen la entrada
+    dailySealResult.value = res
+    void recontributeDaily(entry)
+    trackEvent('fecha/sellado')
+  } finally { dailySealing.value = false }
+}
+
+// Reintenta sellar los picks que quedaron sin sello (sellador caído al guardar).
+async function onDailyReseal () {
+  const entry = dailyEntry.value
+  if (!entry) return
+  const ok = await sealMissingPicks(entry)
+  if (ok) {
+    saveLibrary(library.value)
+    library.value = [...library.value]
+    void recontributeDaily(entry)
+  }
+}
+
+// Compartir la entrada diaria: firma con identidad (exige apodo). No pasa por el
+// aviso de "incompleto" (no aplica: se llena día a día).
+function shareDaily () {
+  ensureDaily()
+  const entry = dailyEntry.value
+  if (!entry) return
+  ensureNick(() => openShare(entry.id))
+}
+
+function closeDailyPopup () {
+  dailyPopupOpen.value = false
+  dailySealResult.value = null
+  dismissDailyPopup()
+}
+
+function dailyPopupToSection () {
+  closeDailyPopup()
+  section.value = 'fecha'
+  sidebarOpen.value = false
+}
+
+// El popup sale en visitas "limpias" (sin enlace entrante) cuando hay partidos
+// de HOY sin pronosticar; el primer arranque se lo deja al tutorial.
+function maybeShowDailyPopup () {
+  let tutorialPending = false
+  try { tutorialPending = !localStorage.getItem('mundial.tutorial') } catch { /* */ }
+  if (tutorialPending) return
+  if (shouldShowDailyPopup(allFixtures(officialEntry.value), dailyEntry.value)) {
+    dailyPopupOpen.value = true
+    trackEvent('fecha/popup')
+  }
 }
 
 // Cambio de pestaña con guarda: si hay cambios sin aplicar (afectan las llaves),
@@ -381,7 +599,11 @@ async function downloadPdf (url: string) {
 async function urlForEntry (entry: SavedPrediction): Promise<string> {
   if (!entry.mine && entry.sharedUrl) return entry.sharedUrl
   const code = entry.id === activeId.value ? encodePrediction(pred) : entry.code
-  return (await buildShareUrl(code, entry.name)).url
+  // Reutiliza el sello guardado (fecha del sellado original) y persiste el que
+  // se use (autosellado: imprimir/PDF también dejan el pronóstico sellado).
+  const res = await buildShareUrl(code, entry.name, presetSealFor(entry, code))
+  adoptSeal(entry, code, res.seal)
+  return res.url
 }
 
 async function pdfEntry (id: string) {
@@ -494,6 +716,7 @@ function select (id: string) {
   if (!entry) return
   activeId.value = id
   setActiveId(id)
+  sealError.value = false // el error de sellado pertenece a la entrada anterior
   try { applyPrediction(decodePrediction(entry.code)) }
   catch { applyPrediction(defaultPrediction()) }
   // Modo/alcance/resultados: si el entry los tiene guardados (míos), úsalos; si
@@ -733,7 +956,7 @@ function pickScope (scope: Scope) {
 
 function remove (id: string) {
   const entry = library.value.find((p) => p.id === id)
-  if (!entry) return
+  if (!entry || entry.daily) return // la entrada diaria es única por cuenta: no se borra
   if (!confirm(t('store.confirmDelete', { name: entry.name }))) return
   library.value = library.value.filter((p) => p.id !== id)
   saveLibrary(library.value)
@@ -780,9 +1003,11 @@ async function doImport () {
     const isMine = parsed.verified && await isOwnAuthor(parsed.publickey)
     // Acuse de apertura al autor (si es de otra persona). Throttle 24h en el motor.
     if (!isMine) void reportOpen(parsed.publickey, `${SHARE_BASE}#${frag}`, parsed.name)
-    // ¿Ya lo tenemos? lo seleccionamos en vez de duplicar.
-    const existing = library.value.find((p) => !p.official && p.code === parsed.code)
+    // ¿Ya lo tenemos? lo seleccionamos en vez de duplicar. (La entrada diaria no
+    // cuenta: no se abre como pronóstico clásico; el enlace entra como copia.)
+    const existing = library.value.find((p) => !p.official && !p.daily && p.code === parsed.code)
     if (existing) {
+      if (adoptIncomingSeal(existing, parsed, isMine)) saveLibrary(library.value)
       select(existing.id)
     } else {
       const entry = buildIncomingEntry(parsed, frag, isMine)
@@ -806,12 +1031,14 @@ async function doImport () {
 function buildIncomingEntry (parsed: NonNullable<Awaited<ReturnType<typeof parseShareFragment>>>, frag: string, isMine: boolean): SavedPrediction {
   if (isMine) {
     const p = decodePrediction(parsed.code)
-    return {
+    const entry: SavedPrediction = {
       id: genId(), name: parsed.name || t('store.sharedName'), code: parsed.code,
       updatedAt: Date.now(), mine: true,
       mode: p.mode, scope: p.scope, results: p.results,
       draftGroupOrder: p.groupOrder.map((a) => [...a]), draftThirdsRank: [...p.thirdsRank],
     }
+    adoptIncomingSeal(entry, parsed, true) // rama isMine: el enlace propio trae su sello
+    return entry
   }
   return {
     id: genId(), name: parsed.name || parsed.nickname || t('store.sharedName'),
@@ -893,10 +1120,12 @@ async function importFromHash (frag: string): Promise<boolean> {
   // Acuse de apertura: si el pronóstico es de OTRA persona, avisarle (por su
   // pubkey, que viene en el enlace) que lo abrimos. Throttle 24h en el motor.
   if (!isMine) void reportOpen(parsed.publickey, `${SHARE_BASE}#${frag}`, parsed.name)
-  // Si ya lo tenemos (propio o de amigo), no duplicamos: lo seleccionamos.
-  const existing = library.value.find((p) => !p.official && p.code === parsed.code)
+  // Si ya lo tenemos (propio o de amigo), no duplicamos: lo seleccionamos. (La
+  // entrada diaria no cuenta: no se abre como pronóstico clásico.)
+  const existing = library.value.find((p) => !p.official && !p.daily && p.code === parsed.code)
   if (existing) {
     if (parsed.name && !existing.mine) existing.name = parsed.name
+    if (adoptIncomingSeal(existing, parsed, isMine)) saveLibrary(library.value)
     select(existing.id)
     tab.value = 'llaves'
     return true
@@ -935,6 +1164,7 @@ onMounted(async () => {
 
   library.value = loadLibrary()
   ensureOfficialEntry()
+  ensureDaily()
 
   // Estado compartido de salas (carga salas + identidad para autoría).
   await initRooms()
@@ -975,10 +1205,16 @@ onMounted(async () => {
       library.value = list
       saveLibrary(list)
       ensureOfficialEntry()
+      // La entrada diaria es única por cuenta: si la nube trajo otra (creada en
+      // paralelo en otro dispositivo), ensureDaily la fusiona pick a pick.
+      ensureDaily()
       // Si el pronóstico activo llegó actualizado desde la nube, refrescamos la vista.
       if (activeId.value && library.value.some((p) => p.id === activeId.value)) select(activeId.value)
     })
     .catch(() => { /* sin nube, seguimos local */ })
+    // El popup diario espera a la rehidratación: así no ofrece partidos que ya
+    // se pronosticaron en otro dispositivo de la misma cuenta.
+    .finally(() => { if (!frag) maybeShowDailyPopup() })
 
   // Resultados oficiales en vivo: traer del relay al abrir y mantener al día
   // (poll mientras la página esté visible; más seguido si hay partido en juego).
@@ -1016,6 +1252,7 @@ onUnmounted(() => {
       :section="section"
       @setsection="section = $event"
       @openresults="openOfficialResults"
+      @sharedaily="shareDaily(); sidebarOpen = false"
     />
     <div class="main">
     <header class="scoreboard">
@@ -1133,6 +1370,27 @@ onUnmounted(() => {
       </div>
     </div>
 
+    <!-- Franja de sellado: certifica la fecha del pronóstico sin compartirlo.
+         El sello queda guardado; al editar deja de aplicar y se puede volver a
+         sellar o cancelar la edición (volver al pronóstico sellado). -->
+    <div v-if="!readonly && !isOfficial && activeEntry" class="seal-bar" :class="sealState" data-testid="seal-bar">
+      <template v-if="sealState === 'sealed'">
+        <span class="seal-msg" data-testid="seal-status">{{ t('seal.sealedAt', { date: sealDate }) }}</span>
+      </template>
+      <template v-else-if="sealState === 'stale'">
+        <span class="seal-msg" data-testid="seal-status">{{ t('seal.stale') }}</span>
+        <div class="seal-actions">
+          <button class="seal-btn" data-testid="seal-btn" :disabled="sealing" @click="trySeal">{{ sealing ? '…' : t('seal.resealBtn') }}</button>
+          <button class="seal-cancel" data-testid="seal-cancel-edit" :title="t('seal.cancelEditTitle')" @click="cancelEdit">{{ t('seal.cancelEdit') }}</button>
+        </div>
+      </template>
+      <template v-else>
+        <span class="seal-msg" data-testid="seal-status">{{ t('seal.hint') }}</span>
+        <button class="seal-btn" data-testid="seal-btn" :disabled="sealing" @click="trySeal">{{ sealing ? '…' : t('seal.btn') }}</button>
+      </template>
+      <span v-if="sealError" class="seal-err" data-testid="seal-error">{{ t('seal.error') }}</span>
+    </div>
+
     <nav class="tabs">
       <button v-if="tabAllowed('grupos')" data-testid="tab-grupos" :class="{ active: tab === 'grupos' }" @click="goTab('grupos')">{{ t('tabs.groups') }}</button>
       <button v-if="tabAllowed('llaves')" data-testid="tab-llaves" :class="{ active: tab === 'llaves' }" @click="goTab('llaves')">{{ t('tabs.bracket') }}</button>
@@ -1152,7 +1410,15 @@ onUnmounted(() => {
     </template>
 
     <main class="content">
-      <RoomsPage v-if="section === 'rooms'" :library="library" :official="officialEntry" />
+      <RoomsPage v-if="section === 'rooms'" :library="library" :official="officialEntry" @sealed="onRoomSealed" />
+      <MatchdayPage
+        v-else-if="section === 'fecha'"
+        :entry="dailyEntry"
+        :official="officialEntry"
+        @save="onDailySave"
+        @share="shareDaily"
+        @reseal="onDailyReseal"
+      />
       <template v-else>
       <section v-show="tab === 'grupos'" class="scrolly" data-testid="zone-grupos">
         <!-- Modo manual: tablas arrastrables (comportamiento clásico). -->
@@ -1224,13 +1490,27 @@ onUnmounted(() => {
       :code="shareCode"
       :name="shareName"
       :preset-url="sharePreset"
+      :preset-seal="shareSeal"
       :open="shareOpen"
       @close="shareOpen = false"
       @print="handlePrint"
       @pdf="downloadPdf"
+      @sealed="onShareSealed"
     />
 
     <RoomShareModal />
+
+    <!-- Popup diario del pronóstico de la fecha (partidos de HOY). -->
+    <MatchdayPopup
+      :open="dailyPopupOpen"
+      :matches="dailyTodayMatches"
+      :picks="dailyEntry?.results ?? {}"
+      :sealing="dailySealing"
+      :seal-result="dailySealResult"
+      @save="onDailySave"
+      @close="closeDailyPopup"
+      @gosection="dailyPopupToSection"
+    />
 
     <ScoringInfo :open="scoringOpen" @close="scoringOpen = false" />
 
@@ -1603,6 +1883,36 @@ onUnmounted(() => {
   font-size: 0.85rem; white-space: nowrap;
 }
 .cancel-btn:hover { background: rgba(255, 207, 63, 0.12); }
+
+/* Franja de sellado del pronóstico (certificar fecha / cancelar edición) */
+.seal-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.7rem;
+  flex-wrap: wrap; padding: 0.45rem 1rem;
+  border-bottom: 1px solid var(--line);
+}
+.seal-bar.sealed { background: rgba(46, 204, 113, 0.07); border-bottom-color: rgba(46, 204, 113, 0.45); }
+.seal-bar.stale {
+  background: linear-gradient(90deg, rgba(255, 207, 63, 0.14), rgba(255, 207, 63, 0.05));
+  border-bottom-color: var(--gold);
+}
+.seal-msg { color: var(--muted); font-size: 0.8rem; font-weight: 700; }
+.seal-bar.sealed .seal-msg { color: var(--green); }
+.seal-bar.stale .seal-msg { color: var(--gold); }
+.seal-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.seal-btn {
+  background: var(--azure); color: #042038; border: none; border-radius: 50px;
+  padding: 0.42rem 1rem; font-weight: 800; cursor: pointer; font-family: inherit;
+  font-size: 0.82rem; white-space: nowrap;
+}
+.seal-btn:hover { filter: brightness(1.06); }
+.seal-btn:disabled { opacity: 0.55; cursor: default; }
+.seal-cancel {
+  background: transparent; color: var(--gold); border: 1px solid var(--gold); border-radius: 50px;
+  padding: 0.42rem 0.9rem; font-weight: 700; cursor: pointer; font-family: inherit;
+  font-size: 0.82rem; white-space: nowrap;
+}
+.seal-cancel:hover { background: rgba(255, 207, 63, 0.12); }
+.seal-err { color: #ff6b6b; font-size: 0.78rem; flex-basis: 100%; }
 
 .tabs { display: flex; gap: 0.4rem; padding: 0.8rem 1rem 0; }
 .tabs button {

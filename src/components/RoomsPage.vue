@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, watch, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { buildShareUrl } from '../lib/share'
+import { buildShareUrl, b64urlToBytes, type PredictionSeal } from '../lib/share'
 import type { SavedPrediction } from '../lib/store'
 import { decodePrediction } from '../lib/codec'
 import { upsertMember, type RoomMode, type RoomScope, type RoomMember } from '../lib/roomStore'
 import { buildRoomInviteUrl, buildMemberContribUrl, buildMemberEnvelope, buildRetractEnvelope, buildForwardEnvelope, buildForwardRetractEnvelope, memberFromEnvelope, modeAllowed, scopeAllowed } from '../lib/room'
+import { dailySealsForEnvelope, findDailyEntry } from '../lib/matchday'
 import { sendRoomInvites } from '../lib/inbox'
 import { useRooms } from '../composables/useRooms'
 import { shortKey } from '../lib/rating'
@@ -25,6 +26,17 @@ const props = defineProps<{
   official: SavedPrediction | null
 }>()
 
+// Aportar autosella: App persiste el sello usado en la entrada compartida.
+const emit = defineEmits<{ sealed: [entryId: string, code: string, seal: PredictionSeal] }>()
+
+// Sello guardado de la entrada (botón "Sellar"), reutilizable solo si el código
+// no cambió desde el sellado: así la fecha certificada del aporte es la del
+// sellado original y un pronóstico viejo no queda como "sellado tarde".
+function presetSeal (p: SavedPrediction): PredictionSeal | null {
+  if (!p.seal || p.seal.code !== p.code) return null
+  return { ts: p.seal.ts, sig: b64urlToBytes(p.seal.sig) }
+}
+
 const {
   activeRoom, myPubkey, myNick, contacts, unreachable, roomTab,
   createRoom, joinByLink, persist, updateSyncFrag, broadcastEnvelope,
@@ -32,6 +44,9 @@ const {
 
 // --- Home (sin sala activa): crear + unirse, inline ------------------------
 const cName = ref('')
+// Tipo de sala: clásica (pronóstico completo) o de la FECHA (partido a partido,
+// cada pick sellado y revelado al kickoff).
+const cType = ref<'classic' | 'daily'>('classic')
 const cMode = ref<RoomMode>('free')
 const cScope = ref<RoomScope>('free')
 const cSealed = ref(false)
@@ -44,8 +59,16 @@ async function doCreate () {
   if (creating.value || !cName.value.trim()) return
   creating.value = true
   try {
-    await createRoom({ name: cName.value, mode: cMode.value, scope: cScope.value, sealed: cSealed.value })
-    cName.value = ''; cMode.value = 'free'; cScope.value = 'free'; cSealed.value = false
+    const daily = cType.value === 'daily'
+    await createRoom({
+      name: cName.value,
+      mode: daily ? 'free' : cMode.value,
+      scope: daily ? 'free' : cScope.value,
+      sealed: daily ? false : cSealed.value,
+      daily,
+    })
+    if (daily) trackEvent('sala/fecha-creada')
+    cName.value = ''; cType.value = 'classic'; cMode.value = 'free'; cScope.value = 'free'; cSealed.value = false
   } finally { creating.value = false }
 }
 
@@ -67,7 +90,12 @@ function goRoomTab (tab: 'table' | 'compare' | 'matches') {
   trackEvent('sala/' + tab)
 }
 
-const myPredictions = computed(() => props.library.filter((p) => p.mine && !p.official))
+// Pronósticos clásicos propios (la entrada DIARIA tiene su propio flujo abajo).
+const myPredictions = computed(() => props.library.filter((p) => p.mine && !p.official && !p.daily))
+// Entrada del pronóstico de la fecha (única por cuenta): el único aporte válido
+// en una sala de la fecha.
+const dailyEntry = computed(() => findDailyEntry(props.library))
+const dailyPickCount = computed(() => Object.keys(dailyEntry.value?.results ?? {}).length)
 function entryMode (p: SavedPrediction): string {
   if (p.mode) return p.mode
   try { return decodePrediction(p.code).mode } catch { return 'manual' }
@@ -76,10 +104,13 @@ function entryScope (p: SavedPrediction): string {
   if (p.scope) return p.scope
   try { return decodePrediction(p.code).scope } catch { return 'all' }
 }
-// ¿El pronóstico cumple modo Y alcance exigidos por la sala activa?
+// ¿El pronóstico cumple modo Y alcance exigidos por la sala activa? En salas de
+// la FECHA solo se aporta la entrada diaria (su propio flujo).
 function canContribute (p: SavedPrediction): boolean {
   const room = activeRoom.value
   if (!room) return false
+  if (room.daily) return !!p.daily
+  if (p.daily) return false
   return modeAllowed(room.mode, entryMode(p)) && scopeAllowed(room.scope, entryScope(p))
 }
 const myMember = computed(() => activeRoom.value?.members.find((m) => m.publickey === myPubkey.value && !m.deleted) ?? null)
@@ -117,10 +148,17 @@ async function doContribute (entry: SavedPrediction) {
   if (!room) return
   contributing.value = true
   try {
-    const { url } = await buildShareUrl(entry.code, entry.name)
+    // code capturado ANTES del await: si el usuario edita mientras responde el
+    // sellador, App descarta el sello desfasado (guard entry.code !== code).
+    const code = entry.code
+    const { url, seal } = await buildShareUrl(code, entry.name, presetSeal(entry))
+    if (seal) emit('sealed', entry.id, code, seal)
     const frag = url.split('#')[1] ?? ''
+    // Salas de la fecha: el sobre lleva los sellos POR PARTIDO (prueban que cada
+    // pick existió antes de su kickoff; sin ellos el pick no puntúa).
+    const ds = room.daily && entry.daily ? dailySealsForEnvelope(entry) : undefined
     // Sobre firmado por el autor con ts: ordena versiones (LWW) y habilita borrado.
-    const env = await buildMemberEnvelope(room.id, frag, Date.now())
+    const env = await buildMemberEnvelope(room.id, frag, Date.now(), ds)
     const parsed = await memberFromEnvelope(env)
     if (!parsed) throw new Error(t('rooms.contribError'))
     parsed.member.nickname = parsed.member.nickname || myNick.value || undefined
@@ -218,7 +256,7 @@ async function buildInvite () {
   if (!room) return
   try {
     const { url } = await buildRoomInviteUrl({
-      id: room.id, name: room.name, mode: room.mode, scope: room.scope ?? 'free', sealedUntil: room.sealedUntil, createdAt: room.createdAt,
+      id: room.id, name: room.name, mode: room.mode, scope: room.scope ?? 'free', sealedUntil: room.sealedUntil, createdAt: room.createdAt, daily: room.daily,
     })
     inviteUrl.value = url
   } catch (e) { console.warn('No se pudo armar la invitación:', e) }
@@ -260,21 +298,33 @@ watch(activeRoom, (r) => {
         <h3>➕ {{ t('rooms.create') }}</h3>
         <label class="lbl">{{ t('rooms.name') }}</label>
         <input v-model="cName" maxlength="60" :placeholder="t('rooms.namePlaceholder')" @keydown.stop @keyup.enter="doCreate" />
-        <label class="lbl">{{ t('rooms.mode') }}</label>
-        <select v-model="cMode" class="sel">
-          <option value="free">{{ t('rooms.modeFree') }}</option>
-          <option value="manual">{{ t('modes.simple') }}</option>
-          <option value="winlose">{{ t('modes.medium') }}</option>
-          <option value="score">{{ t('modes.full') }}</option>
-        </select>
-        <label class="lbl">{{ t('rooms.scope') }}</label>
-        <select v-model="cScope" class="sel">
-          <option value="free">{{ t('rooms.modeFree') }}</option>
-          <option value="all">{{ t('scopes.all') }}</option>
-          <option value="groups">{{ t('scopes.groups') }}</option>
-        </select>
-        <label class="check"><input type="checkbox" v-model="cSealed" /><span>{{ t('rooms.sealOption') }}</span></label>
-        <p class="hint">{{ cSealed ? t('rooms.sealOn') : t('rooms.sealOff') }}</p>
+        <label class="lbl">{{ t('rooms.typeLabel') }}</label>
+        <div class="rtype" data-testid="room-type">
+          <button class="rtype-opt" :class="{ on: cType === 'classic' }" data-testid="room-type-classic" @click="cType = 'classic'">
+            <strong>{{ t('rooms.typeClassic') }}</strong><span>{{ t('rooms.typeClassicDesc') }}</span>
+          </button>
+          <button class="rtype-opt" :class="{ on: cType === 'daily' }" data-testid="room-type-daily" @click="cType = 'daily'">
+            <strong>📅 {{ t('rooms.typeDaily') }}</strong><span>{{ t('rooms.typeDailyDesc') }}</span>
+          </button>
+        </div>
+        <template v-if="cType === 'classic'">
+          <label class="lbl">{{ t('rooms.mode') }}</label>
+          <select v-model="cMode" class="sel">
+            <option value="free">{{ t('rooms.modeFree') }}</option>
+            <option value="manual">{{ t('modes.simple') }}</option>
+            <option value="winlose">{{ t('modes.medium') }}</option>
+            <option value="score">{{ t('modes.full') }}</option>
+          </select>
+          <label class="lbl">{{ t('rooms.scope') }}</label>
+          <select v-model="cScope" class="sel">
+            <option value="free">{{ t('rooms.modeFree') }}</option>
+            <option value="all">{{ t('scopes.all') }}</option>
+            <option value="groups">{{ t('scopes.groups') }}</option>
+          </select>
+          <label class="check"><input type="checkbox" v-model="cSealed" /><span>{{ t('rooms.sealOption') }}</span></label>
+          <p class="hint">{{ cSealed ? t('rooms.sealOn') : t('rooms.sealOff') }}</p>
+        </template>
+        <p v-else class="hint">{{ t('rooms.dailyCreateHint') }}</p>
         <button class="primary full" :disabled="creating || !cName.trim()" @click="doCreate">{{ creating ? '…' : t('rooms.createConfirm') }}</button>
       </section>
 
@@ -293,25 +343,37 @@ watch(activeRoom, (r) => {
     <!-- Aportar mi pronóstico (también si otro aportó el mío por mí: lo reemplazo) -->
     <div v-if="!myMember || forwardedMe" class="contribute">
       <p v-if="forwardedMe" class="hint fwd-note">↪ {{ t('rooms.forwardedForYou', { n: forwardedMe.viaNick || shortKey(forwardedMe.via || '') }) }}</p>
-      <p class="contribute-h">{{ t('rooms.contributePrompt') }}</p>
-      <p v-if="!myPredictions.length" class="empty">{{ t('rooms.noMyPreds') }}</p>
-      <div v-for="p in myPredictions" :key="p.id" class="pick">
-        <span class="pick-nm">{{ p.name }} <small>{{ modeName(entryMode(p) as RoomMode) }}<template v-if="entryScope(p) !== 'all'"> · {{ scopeName(entryScope(p) as RoomScope) }}</template></small></span>
-        <button class="go" :disabled="contributing || !canContribute(p)"
-          :title="!canContribute(p) ? t('rooms.modeMismatch') : ''" @click="contribute(p)">{{ t('rooms.contribute') }}</button>
-      </div>
+      <!-- Sala de la FECHA: se aporta la entrada diaria (única por cuenta). -->
+      <template v-if="activeRoom.daily">
+        <p class="contribute-h">📅 {{ t('rooms.dailyContribPrompt') }}</p>
+        <p v-if="!dailyEntry" class="empty">{{ t('rooms.dailyNoEntry') }}</p>
+        <div v-else class="pick" data-testid="daily-contribute">
+          <span class="pick-nm">{{ dailyEntry.name }} <small>{{ t('rooms.dailyPickCount', { n: dailyPickCount }) }}</small></span>
+          <button class="go" :disabled="contributing" @click="contribute(dailyEntry)">{{ t('rooms.contribute') }}</button>
+        </div>
+      </template>
+      <template v-else>
+        <p class="contribute-h">{{ t('rooms.contributePrompt') }}</p>
+        <p v-if="!myPredictions.length" class="empty">{{ t('rooms.noMyPreds') }}</p>
+        <div v-for="p in myPredictions" :key="p.id" class="pick">
+          <span class="pick-nm">{{ p.name }} <small>{{ modeName(entryMode(p) as RoomMode) }}<template v-if="entryScope(p) !== 'all'"> · {{ scopeName(entryScope(p) as RoomScope) }}</template></small></span>
+          <button class="go" :disabled="contributing || !canContribute(p)"
+            :title="!canContribute(p) ? t('rooms.modeMismatch') : ''" @click="contribute(p)">{{ t('rooms.contribute') }}</button>
+        </div>
+      </template>
       <p v-if="contribError" class="err">{{ contribError }}</p>
     </div>
     <div v-else class="mine-note">
-      <span>✓ {{ t('rooms.contributed') }}</span>
+      <span>✓ {{ t('rooms.contributed') }}<small v-if="activeRoom.daily" class="auto-note"> · {{ t('rooms.dailyAutoUpdate') }}</small></span>
       <span class="mine-actions">
         <button class="go ghost mini-share" @click="shareMyContrib">{{ contribShared ? t('rooms.copied') : t('rooms.shareContrib') }}</button>
         <button class="go danger mini-share" @click="removeMyContrib">{{ t('rooms.removeContrib') }}</button>
       </span>
     </div>
 
-    <!-- Aportar pronósticos de AMIGOS (importados, firmados por ellos). -->
-    <div v-if="friendPredictions.length" class="contribute friend" data-testid="friend-contribute">
+    <!-- Aportar pronósticos de AMIGOS (importados, firmados por ellos). En salas
+         de la fecha no aplica: un reenvío no lleva los sellos por partido. -->
+    <div v-if="friendPredictions.length && !activeRoom.daily" class="contribute friend" data-testid="friend-contribute">
       <p class="contribute-h">{{ t('rooms.friendContribPrompt') }}</p>
       <p class="hint">{{ t('rooms.friendContribHint') }}</p>
       <div v-for="p in friendPredictions" :key="p.id" class="pick">
@@ -324,12 +386,13 @@ watch(activeRoom, (r) => {
 
     <nav class="rtabs">
       <button :class="{ on: rtab === 'table' }" @click="goRoomTab('table')">{{ t('rooms.tabTable') }}</button>
-      <button :class="{ on: rtab === 'compare' }" @click="goRoomTab('compare')">{{ t('rooms.tabCompare') }}</button>
+      <!-- En salas de la fecha la comparación de llaves/campeón no aplica. -->
+      <button v-if="!activeRoom.daily" :class="{ on: rtab === 'compare' }" @click="goRoomTab('compare')">{{ t('rooms.tabCompare') }}</button>
       <button :class="{ on: rtab === 'matches' }" data-testid="rtab-matches" @click="goRoomTab('matches')">{{ t('rooms.tabMatches') }}</button>
     </nav>
 
-    <template v-if="rtab === 'table'">
-      <RoomLeaderboard :room="activeRoom" :official="official" :my-pubkey="myPubkey" @remove-forward="removeFriendContrib" />
+    <template v-if="rtab === 'table' || (activeRoom.daily && rtab === 'compare')">
+      <RoomLeaderboard :room="activeRoom" :official="official" :my-pubkey="myPubkey" :daily="activeRoom.daily" @remove-forward="removeFriendContrib" />
 
       <!-- Invitar contactos por el proxy (QR/enlace/redes: en compartir, arriba). -->
       <h4 class="grp-h">{{ t('rooms.inviteContacts') }}</h4>
@@ -345,7 +408,7 @@ watch(activeRoom, (r) => {
       <p v-if="inviteStatus" class="status">{{ inviteStatus }}</p>
     </template>
     <RoomCompare v-else-if="rtab === 'compare'" :room="activeRoom" :official="official" :my-pubkey="myPubkey" />
-    <RoomMatches v-else :room="activeRoom" :official="official" :my-pubkey="myPubkey" />
+    <RoomMatches v-else :room="activeRoom" :official="official" :my-pubkey="myPubkey" :daily="activeRoom.daily" />
   </div>
 </template>
 
@@ -357,6 +420,17 @@ watch(activeRoom, (r) => {
 .card h3 { color: var(--azure); margin-bottom: 0.7rem; font-size: 1.05rem; }
 .lbl { display: block; font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin: 0.6rem 0 0.3rem; }
 input, .sel { width: 100%; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; color: var(--text); padding: 0.55rem; font-size: 0.9rem; font-family: inherit; }
+.rtype { display: flex; flex-direction: column; gap: 0.4rem; }
+.rtype-opt {
+  display: flex; flex-direction: column; gap: 0.1rem; text-align: left;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
+  padding: 0.55rem 0.7rem; cursor: pointer; color: var(--text); font-family: inherit;
+}
+.rtype-opt strong { color: var(--azure); font-size: 0.86rem; }
+.rtype-opt span { color: var(--muted); font-size: 0.72rem; }
+.rtype-opt.on { border-color: var(--azure); background: var(--panel-2); }
+.auto-note { color: var(--muted); font-weight: 400; }
+
 .check { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.7rem; cursor: pointer; }
 .check input { width: auto; }
 .check span { font-size: 0.85rem; }

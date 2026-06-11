@@ -6,14 +6,17 @@
 // agregan las acciones extra.
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { buildShareUrl } from '../lib/share'
+import { buildShareUrl, type PredictionSeal } from '../lib/share'
 import { getNotificationsController } from '../lib/notifications'
 import '@closerclick/closer-click-share'
 
 const { t, locale } = useI18n()
 
-const props = defineProps<{ code: string; open: boolean; name?: string; presetUrl?: string | null }>()
-const emit = defineEmits<{ close: []; print: [url: string]; pdf: [url: string] }>()
+// presetSeal: sello GUARDADO del pronóstico (se reutiliza en el enlace: la fecha
+// certificada es la del sellado, no la de esta compartida). El sello usado se
+// emite en `sealed` para que App lo persista (compartir autosella).
+const props = defineProps<{ code: string; open: boolean; name?: string; presetUrl?: string | null; presetSeal?: PredictionSeal | null }>()
+const emit = defineEmits<{ close: []; print: [url: string]; pdf: [url: string]; sealed: [seal: PredictionSeal, code: string] }>()
 
 const url = ref('')
 const nickname = ref<string | undefined>(undefined)
@@ -33,7 +36,16 @@ async function generate () {
   try {
     // Pronóstico ajeno: reusamos su enlace original (ya firmado por su autor).
     if (props.presetUrl) { url.value = props.presetUrl; nickname.value = undefined }
-    else { const res = await buildShareUrl(props.code, props.name); url.value = res.url; nickname.value = res.nickname }
+    else {
+      // Capturado ANTES del await: el sello corresponde a ESTE código. Si el
+      // usuario edita mientras el sellador responde (hasta 8 s), emitir el code
+      // sellado permite al receptor descartar el sello desfasado.
+      const code = props.code
+      const res = await buildShareUrl(code, props.name, props.presetSeal)
+      url.value = res.url
+      nickname.value = res.nickname
+      if (res.seal) emit('sealed', res.seal, code)
+    }
   } catch { url.value = '' }
 }
 watch(() => props.open, (o) => { if (o) generate() })

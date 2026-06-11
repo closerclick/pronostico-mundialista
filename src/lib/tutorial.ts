@@ -12,8 +12,8 @@ import { createTutorial, type CloserClickTutorial } from '@closerclick/closer-cl
 export interface TutorialCtx {
   /** Idioma actual de la app ('es' | 'en'). */
   lang: () => string
-  /** Cambia de sección (pronósticos / salas). */
-  setSection: (s: 'predictions' | 'rooms') => void
+  /** Cambia de sección (pronósticos / la fecha / salas). */
+  setSection: (s: 'predictions' | 'rooms' | 'fecha') => void
   /** Abre o cierra el cajón lateral (en móvil). */
   setSidebar: (open: boolean) => void
   /** ¿Existe al menos una sala? (para el paso de compartir sala). */
@@ -65,6 +65,16 @@ export function startAppTutorial (ctx: TutorialCtx): CloserClickTutorial | null 
         text: {
           es: 'Cambia entre Pronósticos (tus quinielas) y Salas (competir con amigos en una tabla compartida).',
           en: 'Switch between Predictions (your brackets) and Rooms (compete with friends on a shared leaderboard).',
+        },
+      },
+      {
+        id: 'matchday', order: 2.5, placement: 'right',
+        target: '[data-testid="sb-tab-fecha"]',
+        before: openDrawer,
+        title: { es: 'El pronóstico de la fecha', en: 'The matchday prediction' },
+        text: {
+          es: 'Cada día, pronostica los partidos que se juegan antes de que empiecen: cada pronóstico se sella con fecha certificada. Es único por cuenta.',
+          en: 'Each day, predict the matches before they start: every pick gets a certified timestamp seal. One per account.',
         },
       },
       {

@@ -20,7 +20,7 @@ watch(roomShareOpen, async (open) => {
   if (!room) { url.value = ''; return }
   try {
     const { url: u } = await buildRoomInviteUrl({
-      id: room.id, name: room.name, mode: room.mode, scope: room.scope ?? 'free', sealedUntil: room.sealedUntil, createdAt: room.createdAt,
+      id: room.id, name: room.name, mode: room.mode, scope: room.scope ?? 'free', sealedUntil: room.sealedUntil, createdAt: room.createdAt, daily: room.daily,
     })
     url.value = u
   } catch { url.value = '' }

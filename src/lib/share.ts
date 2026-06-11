@@ -22,9 +22,10 @@
 // contenido y al autor. Se verifica contra la pubkey pineada del sellador.
 
 import { getIdentity } from './identity'
-import { requestSeal, verifySeal, sha256Base64url } from './signer'
+import { requestSeal, verifySeal, sha256Base64url, type PredictionSeal } from './signer'
 
 export { getIdentity }
+export type { PredictionSeal }
 
 export const SHARE_BASE = 'https://mundial.closer.click/'
 
@@ -121,10 +122,28 @@ function predictionSealHash (codeBytes: Uint8Array, xBytes: Uint8Array, yBytes: 
 }
 
 /**
+ * Sella un código de pronóstico con la identidad propia SIN compartirlo (botón
+ * "Sellar"): mismo hash que al compartir (code ‖ X ‖ Y), así el sello obtenido
+ * se reutiliza después en el enlace/aporte a sala. Devuelve null si no hay
+ * identidad o el sellador no responde.
+ */
+export async function sealPredictionCode (code: string): Promise<PredictionSeal | null> {
+  const id = await getIdentity()
+  if (!id?.me?.publickey) return null
+  const jwk = JSON.parse(id.me.publickey) as { x: string; y: string }
+  const hash = await predictionSealHash(b64urlToBytes(code), b64urlToBytes(jwk.x), b64urlToBytes(jwk.y))
+  return requestSeal(hash)
+}
+
+/**
  * Firma el código del pronóstico y arma el enlace compartible (blob binario).
  * Lanza si no hay identidad disponible.
+ * `presetSeal`: sello GUARDADO del pronóstico (botón "Sellar"); si sigue siendo
+ * válido para este código+autor se reutiliza (la fecha certificada es la del
+ * sellado original, no la de esta compartida). Si no, se pide uno nuevo.
+ * Devuelve también el sello usado, para que el caller lo persista.
  */
-export async function buildShareUrl (code: string, name?: string): Promise<{ url: string; publickey: string; nickname?: string }> {
+export async function buildShareUrl (code: string, name?: string, presetSeal?: PredictionSeal | null): Promise<{ url: string; publickey: string; nickname?: string; seal: PredictionSeal | null }> {
   const id = await getIdentity()
   if (!id) throw new Error('No se pudo conectar a la identidad (id.closer.click).')
 
@@ -144,7 +163,9 @@ export async function buildShareUrl (code: string, name?: string): Promise<{ url
   // Sello de tiempo del sellador (best-effort): si no responde, se comparte sin
   // sello (= sin fecha verificable). El sellador pone la fecha, no nosotros.
   const sealHash = await predictionSealHash(codeBytes, xBytes, yBytes)
-  const seal = await requestSeal(sealHash)
+  let seal: PredictionSeal | null = null
+  if (presetSeal && await verifySeal(sealHash, presetSeal.ts, presetSeal.sig)) seal = presetSeal
+  if (!seal) seal = await requestSeal(sealHash)
 
   const head = [
     Uint8Array.of(seal ? PAYLOAD_VERSION_SEALED : PAYLOAD_VERSION),
@@ -159,7 +180,7 @@ export async function buildShareUrl (code: string, name?: string): Promise<{ url
   if (seal) head.push(ts6ToBytes(seal.ts), seal.sig)
   const blob = concatBytes(head)
 
-  return { url: `${SHARE_BASE}#${bytesToB64url(blob)}`, publickey, nickname }
+  return { url: `${SHARE_BASE}#${bytesToB64url(blob)}`, publickey, nickname, seal }
 }
 
 export interface IncomingPrediction {
@@ -174,6 +195,9 @@ export interface IncomingPrediction {
   sealedAt?: number
   /** ¿el sello del sellador es válido (firma correcta contra la pubkey pineada)? */
   sealValid?: boolean
+  /** firma cruda del sellador (64 bytes): permite re-GUARDAR el sello al
+   *  importar un pronóstico propio (recupera la fecha certificada original). */
+  sealSig?: Uint8Array
 }
 
 /** Sello crudo extraído del blob (antes de verificar). */
@@ -199,6 +223,7 @@ async function verifyAndBuild (
   if (rawSeal) {
     out.sealedAt = rawSeal.ts
     out.sealValid = await verifySeal(rawSeal.hash, rawSeal.ts, rawSeal.sig)
+    out.sealSig = rawSeal.sig
   }
   return out
 }

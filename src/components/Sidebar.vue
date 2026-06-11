@@ -41,7 +41,7 @@ const props = defineProps<{
   open: boolean
   library: SavedPrediction[]
   activeId: string | null
-  section: 'predictions' | 'rooms'
+  section: 'predictions' | 'rooms' | 'fecha'
 }>()
 const emit = defineEmits<{
   close: []
@@ -56,8 +56,9 @@ const emit = defineEmits<{
   print: [id: string]
   pdf: [id: string]
   scoring: []
-  setsection: [s: 'predictions' | 'rooms']
+  setsection: [s: 'predictions' | 'rooms' | 'fecha']
   openresults: []
+  sharedaily: []
 }>()
 
 function modeTag (m: string): string {
@@ -76,7 +77,10 @@ function onLeaveRoom (id: string, name: string) {
 }
 const sortedRooms = computed(() => [...rooms.value].sort((a, b) => b.updatedAt - a.updatedAt))
 
-const mine = computed(() => props.library.filter((p) => p.mine && !p.official).sort((a, b) => b.updatedAt - a.updatedAt))
+// La entrada DIARIA (pronóstico de la fecha) tiene su propia sección: no se
+// lista entre los pronósticos clásicos.
+const mine = computed(() => props.library.filter((p) => p.mine && !p.official && !p.daily).sort((a, b) => b.updatedAt - a.updatedAt))
+const daily = computed(() => props.library.find((p) => p.daily) ?? null)
 const imported = computed(() => props.library.filter((p) => !p.mine).sort((a, b) => b.updatedAt - a.updatedAt))
 // Resultados REALES/oficiales: entradas marcadas con `official`.
 const official = computed(() => props.library.filter((p) => p.official).sort((a, b) => b.updatedAt - a.updatedAt))
@@ -88,7 +92,7 @@ const scores = computed<Record<string, number>>(() => {
   const map: Record<string, number> = {}
   if (!o) return map
   for (const p of props.library) {
-    if (p.official) continue
+    if (p.official || p.daily) continue // la diaria puntúa con su propia regla (sección La fecha)
     map[p.id] = scoreEntry(p, o).total
   }
   return map
@@ -104,13 +108,14 @@ const scores = computed<Record<string, number>>(() => {
              En móvil el sidebar es un cajón, así que el chevron va en el header
              (App.vue) y este se oculta. -->
         <closer-click-back class="cc-back-sb"></closer-click-back>
-        <span>{{ section === 'rooms' ? t('rooms.title') : t('sidebar.title') }}</span>
+        <span>{{ section === 'rooms' ? t('rooms.title') : section === 'fecha' ? t('daily.title') : t('sidebar.title') }}</span>
         <button class="x" @click="emit('close')" :aria-label="t('common.close')">×</button>
       </header>
 
       <!-- Conmutador de sección: Pronósticos / Salas -->
       <nav class="section-tabs" data-testid="sb-sections">
         <button :class="{ on: section === 'predictions' }" data-testid="sb-tab-predictions" @click="emit('setsection', 'predictions')">📋 {{ t('sidebar.tabPredictions') }}</button>
+        <button :class="{ on: section === 'fecha' }" data-testid="sb-tab-fecha" @click="emit('setsection', 'fecha')">📅 {{ t('sidebar.tabDaily') }}</button>
         <button :class="{ on: section === 'rooms' }" data-testid="sb-tab-rooms" @click="emit('setsection', 'rooms')">🏟 {{ t('sidebar.tabRooms') }}</button>
       </nav>
 
@@ -228,6 +233,24 @@ const scores = computed<Record<string, number>>(() => {
       </section>
       </template>
 
+      <!-- ===== SECCIÓN LA FECHA (pronóstico diario, único por cuenta) ===== -->
+      <template v-else-if="section === 'fecha'">
+        <section class="group" data-testid="sb-section-daily">
+          <h4>{{ t('daily.title') }}</h4>
+          <p class="daily-hint">{{ t('daily.sidebarHint') }}</p>
+          <div v-if="daily" class="item" data-testid="daily-item" @click="emit('close')">
+            <span class="nm"><span class="nm-row">📅 {{ daily.name }}</span></span>
+            <span class="tools">
+              <button class="share-i" :title="t('common.share')" @click.stop="emit('sharedaily')">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true">
+                  <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6" /><path d="m21 3-9 9" /><path d="M15 3h6v6" /></g>
+                </svg>
+              </button>
+            </span>
+          </div>
+        </section>
+      </template>
+
       <!-- ===== SECCIÓN SALAS ===== -->
       <template v-else>
         <div class="actions">
@@ -249,8 +272,11 @@ const scores = computed<Record<string, number>>(() => {
             <span class="nm">
               <span class="nm-row">{{ r.name }}</span>
               <span class="room-meta">
-                <small class="mode-tag">{{ modeTag(r.mode) }}</small>
-                <small v-if="roomScopeTag(r.scope)" class="scope-tag">{{ roomScopeTag(r.scope) }}</small>
+                <small v-if="r.daily" class="mode-tag">📅 {{ t('rooms.dailyTag') }}</small>
+                <template v-else>
+                  <small class="mode-tag">{{ modeTag(r.mode) }}</small>
+                  <small v-if="roomScopeTag(r.scope)" class="scope-tag">{{ roomScopeTag(r.scope) }}</small>
+                </template>
                 <small class="fill-tag">👥 {{ r.members.length }}</small>
                 <small v-if="r.sealedUntil > Date.now()" class="seal-tag">🔒</small>
                 <small v-if="r.mine" class="host-tag">{{ t('rooms.host') }}</small>
@@ -319,6 +345,8 @@ const scores = computed<Record<string, number>>(() => {
   padding: 0.5rem; border-radius: 8px; cursor: pointer; font-weight: 800; font-size: 0.8rem;
 }
 .section-tabs button.on { background: var(--green); color: #04210f; border-color: var(--green); }
+
+.daily-hint { color: var(--muted); font-size: 0.76rem; margin-bottom: 0.5rem; }
 
 .room-meta { display: inline-flex; gap: 0.3rem; align-items: center; margin-top: 0.2rem; flex-wrap: wrap; }
 .seal-tag { font-size: 0.62rem; }

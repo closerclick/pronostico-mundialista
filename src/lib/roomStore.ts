@@ -37,6 +37,10 @@ export interface RoomMember {
   sealedAt?: number
   /** ¿el sello del sellador verificó contra la pubkey pineada? */
   sealValid?: boolean
+  /** SALAS DE LA FECHA: por partido, el instante CERTIFICADO (ms) en que existió
+   *  el pick — sellos por partido del sobre, YA VERIFICADOS contra el TSA y el
+   *  marcador aportado. Un pick solo puntúa si su prueba es anterior al kickoff. */
+  proof?: Record<number, number>
   /** tombstone: el autor borró su aporte (se conserva como lápida para que un
    *  reenvío de un sobre viejo no lo "reviva"). */
   deleted?: boolean
@@ -65,6 +69,10 @@ export interface Room {
   /** privacidad: 0 = pronósticos visibles desde ya; o un timestamp (ms) hasta el
    *  que los pronósticos ajenos quedan "sellados" (ocultos para evitar copia). */
   sealedUntil: number
+  /** true = sala del PRONÓSTICO DE LA FECHA: los miembros aportan su entrada
+   *  diaria, el puntaje es por partido (gateado por sello a tiempo) y los picks
+   *  ajenos se ocultan hasta el kickoff de cada partido (no hay sello global). */
+  daily?: boolean
   /** clave pública del creador (host lógico, NO autoritativo) */
   hostPubkey: string
   hostNick?: string

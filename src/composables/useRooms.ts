@@ -12,7 +12,11 @@ import {
 } from '../lib/roomStore'
 import {
   genRoomId, TOURNAMENT_START, parseRoomInvite, parseMemberContrib, memberFromEnvelope,
+  buildMemberEnvelope,
 } from '../lib/room'
+import { buildShareUrl } from '../lib/share'
+import { dailySealsForEnvelope } from '../lib/matchday'
+import type { SavedPrediction } from '../lib/store'
 import { RoomSync } from '../lib/roomSync'
 
 // --- Estado a nivel de módulo (compartido por todos los componentes) --------
@@ -148,7 +152,7 @@ function closeRoom () {
 }
 
 // --- Crear / unirse / salir -------------------------------------------------
-async function createRoom (input: { name: string; mode: RoomMode; scope: RoomScope; sealed: boolean }): Promise<Room | null> {
+async function createRoom (input: { name: string; mode: RoomMode; scope: RoomScope; sealed: boolean; daily?: boolean }): Promise<Room | null> {
   const idi = await getIdentity()
   if (!idi?.me?.publickey) { unreachable.value = true; return null }
   const now = Date.now()
@@ -157,7 +161,10 @@ async function createRoom (input: { name: string; mode: RoomMode; scope: RoomSco
     name: input.name.trim().slice(0, 60),
     mode: input.mode,
     scope: input.scope,
-    sealedUntil: input.sealed ? TOURNAMENT_START : 0,
+    // Las salas de la fecha no tienen sello global: cada partido se "abre" solo
+    // al kickoff (la máscara por partido vive en las vistas de la sala).
+    sealedUntil: input.daily ? 0 : (input.sealed ? TOURNAMENT_START : 0),
+    daily: input.daily || undefined,
     hostPubkey: idi.me.publickey,
     hostNick: idi.me.nickname || undefined,
     mine: true,
@@ -181,15 +188,15 @@ function extractFragment (text: string): string {
 async function joinByLink (text: string): Promise<string> {
   const parsed = await parseRoomInvite(extractFragment(text))
   if (!parsed) throw new Error('invalid')
-  return upsertRoomFromInvite(parsed.id, parsed.name, parsed.mode, parsed.scope, parsed.sealedUntil, parsed.hostPubkey, parsed.createdAt)
+  return upsertRoomFromInvite(parsed.id, parsed.name, parsed.mode, parsed.scope, parsed.sealedUntil, parsed.hostPubkey, parsed.createdAt, parsed.daily)
 }
 
 /** Crea/actualiza una sala desde un descriptor de invitación ya verificado. */
-function upsertRoomFromInvite (id: string, name: string, mode: RoomMode, scope: RoomScope, sealedUntil: number, hostPubkey: string, createdAt: number): string {
+function upsertRoomFromInvite (id: string, name: string, mode: RoomMode, scope: RoomScope, sealedUntil: number, hostPubkey: string, createdAt: number, daily?: boolean): string {
   let room = rooms.value.find((r) => r.id === id)
   if (!room) {
     room = {
-      id, name, mode, scope, sealedUntil, hostPubkey,
+      id, name, mode, scope, sealedUntil, daily: daily || undefined, hostPubkey,
       mine: hostPubkey === myPubkey.value,
       createdAt, updatedAt: Date.now(), members: [],
     }
@@ -205,12 +212,40 @@ function leaveRoom (id: string) {
   if (activeRoomId.value === id) closeRoom()
 }
 
+// --- Recontribución automática del pronóstico de la FECHA --------------------
+// En una sala de la fecha el aporte cambia cada día (los partidos de hoy). Tras
+// guardar picks, refrescamos en silencio el aporte en TODAS las salas de la
+// fecha donde ya aporté (firmado de nuevo + sellos por partido). El sobre queda
+// guardado en el miembro: la próxima sync de cada sala lo difunde (gossip).
+async function recontributeDaily (entry: SavedPrediction): Promise<void> {
+  const mine = rooms.value.filter((r) =>
+    r.daily && r.members.some((m) => m.publickey === myPubkey.value && !m.deleted && !m.via))
+  if (!mine.length) return
+  try {
+    const idi = await getIdentity()
+    if (!idi?.me?.nickname) return // sin apodo no se firma: el aporte queda manual
+    const { url } = await buildShareUrl(entry.code, entry.name, null)
+    const frag = url.split('#')[1] ?? ''
+    if (!frag) return
+    const ds = dailySealsForEnvelope(entry)
+    for (const room of mine) {
+      const env = await buildMemberEnvelope(room.id, frag, Date.now(), ds)
+      const parsed = await memberFromEnvelope(env)
+      if (!parsed || !parsed.member.verified) continue
+      parsed.member.nickname = parsed.member.nickname || idi.me.nickname || undefined
+      upsertMember(room, parsed.member)
+      if (room.id === activeRoomId.value) updateSyncFrag(env)
+    }
+    persist()
+  } catch { /* best-effort: el aporte manual sigue disponible */ }
+}
+
 // --- Importación desde enlaces (#room= / #rm=) ------------------------------
 async function importRoomInvite (frag: string): Promise<string | null> {
   const parsed = await parseRoomInvite(frag)
   if (!parsed) return null
   reloadRooms()
-  return upsertRoomFromInvite(parsed.id, parsed.name, parsed.mode, parsed.scope, parsed.sealedUntil, parsed.hostPubkey, parsed.createdAt)
+  return upsertRoomFromInvite(parsed.id, parsed.name, parsed.mode, parsed.scope, parsed.sealedUntil, parsed.hostPubkey, parsed.createdAt, parsed.daily)
 }
 
 async function importMemberContrib (frag: string): Promise<string | null> {
@@ -233,5 +268,6 @@ export function useRooms () {
     openRoom, shareRoom, closeRoom, createRoom, joinByLink, leaveRoom, persist,
     startSync, stopSync, ensureSync, updateSyncFrag, broadcastEnvelope,
     importRoomInvite, importMemberContrib, applyEnvelope, getActiveRoomId,
+    recontributeDaily,
   }
 }
