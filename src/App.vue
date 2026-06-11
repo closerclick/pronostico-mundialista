@@ -328,6 +328,11 @@ async function onDailySave (items: { id: number; r: MatchResult }[]) {
     dailySealResult.value = res
     void recontributeDaily(entry)
     trackEvent('fecha/sellado')
+    // Popup: tras guardar todo OK se cierra solo (deja ver el ✓ un instante);
+    // si quedaron sellos fallidos se mantiene abierto mostrando el aviso.
+    if (dailyPopupOpen.value && res.failed === 0) {
+      setTimeout(() => { if (dailyPopupOpen.value) closeDailyPopup() }, 1200)
+    }
   } finally { dailySealing.value = false }
 }
 
