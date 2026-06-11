@@ -84,6 +84,9 @@ function canContribute (p: SavedPrediction): boolean {
   return modeAllowed(room.mode, entryMode(p)) && scopeAllowed(room.scope, entryScope(p))
 }
 const myMember = computed(() => activeRoom.value?.members.find((m) => m.publickey === myPubkey.value && !m.deleted) ?? null)
+// Mi entrada pero REENVIADA por otro (alguien aportó mi pronóstico por mí): el
+// selector sigue visible — aportar el mío en persona la reemplaza (rango autor).
+const forwardedMe = computed(() => (myMember.value?.via ? myMember.value : null))
 // Miembros visibles (sin lápidas de borrado).
 const liveMembers = computed(() => activeRoom.value?.members.filter((m) => !m.deleted) ?? [])
 
@@ -319,8 +322,9 @@ watch(activeRoom, (r) => {
 
   <!-- DETALLE: contenido de la sala activa -->
   <div v-else class="room scrolly">
-    <!-- Aportar mi pronóstico -->
-    <div v-if="!myMember" class="contribute">
+    <!-- Aportar mi pronóstico (también si otro aportó el mío por mí: lo reemplazo) -->
+    <div v-if="!myMember || forwardedMe" class="contribute">
+      <p v-if="forwardedMe" class="hint fwd-note">↪ {{ t('rooms.forwardedForYou', { n: forwardedMe.viaNick || shortKey(forwardedMe.via || '') }) }}</p>
       <p class="contribute-h">{{ t('rooms.contributePrompt') }}</p>
       <p v-if="!myPredictions.length" class="empty">{{ t('rooms.noMyPreds') }}</p>
       <div v-for="p in myPredictions" :key="p.id" class="pick">
@@ -420,6 +424,7 @@ input, .sel { width: 100%; background: var(--bg); border: 1px solid var(--line);
 
 .contribute { border: 1px solid var(--azure); border-radius: 12px; padding: 0.9rem; margin-bottom: 0.9rem; background: rgba(65,180,255,0.06); }
 .contribute.friend { border-color: var(--gold); background: rgba(255, 200, 87, 0.05); }
+.fwd-note { color: var(--azure); margin-bottom: 0.45rem; }
 .contribute-h { font-size: 0.88rem; font-weight: 700; margin-bottom: 0.5rem; }
 .pick { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.35rem 0; }
 .pick-nm { font-size: 0.88rem; }
