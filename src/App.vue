@@ -56,11 +56,9 @@ const library = ref<SavedPrediction[]>([])
 const activeId = ref<string | null>(null)
 const pred = reactive<Prediction>(defaultPrediction())
 const tab = ref<'grupos' | 'resultados' | 'llaves' | 'puntajes'>('grupos')
-// En móvil (cajón) el sidebar arranca ABIERTO para que se vea el menú/lista al
-// entrar; en escritorio es barra fija y este flag no afecta el layout.
-const sidebarOpen = ref(
-  typeof window !== 'undefined' && window.matchMedia('(max-width: 959px)').matches,
-)
+// El sidebar arranca CERRADO: en móvil (cajón) no tapa la vista al entrar y se
+// abre con el botón ☰; en escritorio es barra fija y este flag no afecta el layout.
+const sidebarOpen = ref(false)
 const shareOpen = ref(false)
 const shareEntryId = ref<string | null>(null)
 const identityOpen = ref(false)
