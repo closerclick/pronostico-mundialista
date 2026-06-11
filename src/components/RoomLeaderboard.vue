@@ -6,6 +6,7 @@ import { isMemberSealed } from '../lib/roomStore'
 import type { SavedPrediction } from '../lib/store'
 import { scoreEntry } from '../lib/scoring'
 import { shortKey } from '../lib/rating'
+import { TOURNAMENT_START } from '../lib/room'
 import { getReputation } from '../lib/reputation'
 import { getIdentity } from '../lib/identity'
 import { createVaultProfileProvider } from '@closerclick/closer-click-profile'
@@ -18,6 +19,31 @@ const props = defineProps<{
   official: SavedPrediction | null
   myPubkey: string | null
 }>()
+const emit = defineEmits<{ (e: 'remove-forward', m: RoomMember): void }>()
+
+// Sello de tiempo del pronóstico (signer.closer.click): cuándo existió.
+// 'a tiempo' = sellado antes del primer partido.
+function sealInfo (m: RoomMember): { cls: string; icon: string; text: string } {
+  const fmt = (ts: number) => new Date(ts).toLocaleString()
+  if (m.sealedAt == null) return { cls: 'none', icon: '—', text: t('rooms.sealNone') }
+  if (!m.sealValid) return { cls: 'bad', icon: '⚠', text: t('rooms.sealInvalid') }
+  if (m.sealedAt < TOURNAMENT_START) return { cls: 'ok', icon: '🕓', text: t('rooms.sealOkAt', { date: fmt(m.sealedAt) }) }
+  return { cls: 'late', icon: '⚠', text: t('rooms.sealLate', { date: fmt(m.sealedAt) }) }
+}
+
+// Quitar MI reenvío con doble toque (sin confirm() nativo).
+const removePending = ref<string | null>(null)
+let removeTimer: number | null = null
+function askRemoveForward (m: RoomMember) {
+  if (removePending.value !== m.publickey) {
+    removePending.value = m.publickey
+    if (removeTimer != null) clearTimeout(removeTimer)
+    removeTimer = window.setTimeout(() => { removePending.value = null }, 3000)
+    return
+  }
+  removePending.value = null
+  emit('remove-forward', m)
+}
 
 // Adapta un miembro de la sala a la forma que espera scoreEntry().
 function asEntry (m: RoomMember): SavedPrediction {
@@ -137,10 +163,14 @@ const profileTheme: Record<string, string> = {
             </span>
             <span class="vrow">
               <span class="badge" :class="{ ok: r.member.verified }">{{ r.member.verified ? '✓' : '⚠' }}</span>
+              <span class="seal" :class="sealInfo(r.member).cls" :title="sealInfo(r.member).text">{{ sealInfo(r.member).icon }}</span>
               <span v-if="r.member.via" class="via">↪ {{ t('rooms.contributedBy', { n: r.member.via === myPubkey ? t('rooms.you2') : (r.member.viaNick || shortKey(r.member.via)) }) }}</span>
               <span class="mono">{{ shortKey(r.member.publickey) }}</span>
               <span v-if="!r.isMe && repPct(r.member.publickey) != null" class="rep" title="Confianza (ponderada por tu web-of-trust)">{{ repPct(r.member.publickey) }}%</span>
               <span v-if="!r.isMe && afinPct(r.member.publickey) != null" class="rep afin" title="Afinidad de tu red">♥{{ afinPct(r.member.publickey) }}%</span>
+              <button v-if="r.member.via === myPubkey" class="rm-fwd" @click.stop="askRemoveForward(r.member)">
+                {{ removePending === r.member.publickey ? t('rooms.removeFriendSure') : t('rooms.removeFriend') }}
+              </button>
             </span>
           </td>
           <td class="num">
@@ -186,6 +216,10 @@ const profileTheme: Record<string, string> = {
 .badge { font-size: 0.7rem; color: #e0a; }
 .via { font-size: 0.66rem; color: var(--azure); border: 1px solid var(--azure); border-radius: 4px; padding: 0 0.3rem; white-space: nowrap; }
 .pname { font-size: 0.78rem; color: var(--muted); font-weight: 400; }
+.seal { font-size: 0.7rem; cursor: help; }
+.seal.bad, .seal.late { color: var(--gold); }
+.seal.none { color: var(--muted); opacity: 0.6; }
+.rm-fwd { background: transparent; color: #ff6b6b; border: 1px solid #ff6b6b; border-radius: 5px; padding: 0 0.4rem; font-size: 0.66rem; font-weight: 700; cursor: pointer; font-family: inherit; }
 .badge.ok { color: var(--green); }
 .mono { font-family: monospace; font-size: 0.66rem; color: var(--muted); }
 .rep { font-size: 0.66rem; font-weight: 700; color: var(--green); background: rgba(0,0,0,.18); border-radius: 4px; padding: 0 0.25rem; }

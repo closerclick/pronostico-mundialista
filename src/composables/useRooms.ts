@@ -26,7 +26,7 @@ const contacts = ref<PeerInfo[]>([])
 const unreachable = ref(false)
 // Sub-pestaña de la sala activa (compartida para que la barra lateral y el
 // header puedan llevar al usuario a la sección de invitar/compartir).
-const roomTab = ref<'table' | 'compare' | 'members'>('table')
+const roomTab = ref<'table' | 'compare' | 'matches'>('table')
 // Modal de compartir sala (QR + enlace + redes), abierto desde header/sidebar.
 const roomShareOpen = ref(false)
 

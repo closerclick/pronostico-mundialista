@@ -57,9 +57,9 @@ test('la sección Salas lista, selecciona y muestra el contenido de la sala', as
   await page.locator('.rtabs button', { hasText: /Comparar|Compare/ }).click()
   await expect(page.locator('.cmp .dims')).toBeVisible()
 
-  // Miembros: muestra el QR de invitación y la lista de miembros.
-  await page.locator('.rtabs button', { hasText: /Miembros|Members/ }).click()
-  await expect(page.locator('.invite-box .qr')).toBeVisible()
+  // Partidos: comparación partido a partido (tabla con la columna Oficial).
+  await page.locator('[data-testid="rtab-matches"]').click()
+  await expect(page.locator('.mm')).toBeVisible()
 })
 
 test('el botón Resultados de la barra de Salas lleva a simular puntajes', async ({ page }) => {

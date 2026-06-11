@@ -60,8 +60,9 @@ async function openRoomsSection (page: Page) {
   await page.click('[data-testid="sb-tab-rooms"]')
   await page.waitForSelector('.rtabs', { timeout: 15000 })
 }
+// Los miembros viven en la pestaña Posiciones (la tabla); una fila por miembro.
 async function membersTab (page: Page) {
-  await page.click('.rtabs button:nth-child(3)')
+  await page.click('.rtabs button:nth-child(1)')
   await page.waitForTimeout(400)
 }
 async function contribute (page: Page) {
@@ -153,8 +154,8 @@ test('dos navegadores: aportar → sync por gossip → borrar (tombstone firmado
     await shot(B, '2-beto-ve-a-ana')
 
     // Cada navegador debe ver a AMBOS miembros (la sala convergió por el proxy).
-    await expect(B.locator('.member')).toHaveCount(2)
-    await expect(A.locator('.member')).toHaveCount(2)
+    await expect(B.locator('.lb .tbl tbody tr')).toHaveCount(2)
+    await expect(A.locator('.lb .tbl tbody tr')).toHaveCount(2)
 
     // Ana borra su aporte → tombstone firmado que se propaga.
     await A.click('.mine-actions button.danger')
@@ -165,7 +166,7 @@ test('dos navegadores: aportar → sync por gossip → borrar (tombstone firmado
 
     // En Beto queda SOLO Beto (la lápida ocultó a Ana). En Ana vuelve a aparecer
     // el panel de "Contribuir".
-    await expect(B.locator('.member')).toHaveCount(1)
+    await expect(B.locator('.lb .tbl tbody tr')).toHaveCount(1)
     await expect(A.locator('.contribute')).toBeVisible()
   } finally {
     await ctxA.close()

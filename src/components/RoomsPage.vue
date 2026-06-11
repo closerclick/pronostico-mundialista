@@ -1,18 +1,17 @@
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, inject } from 'vue'
+import { ref, computed, watch, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
-import QRCode from 'qrcode'
 import { buildShareUrl } from '../lib/share'
 import type { SavedPrediction } from '../lib/store'
 import { decodePrediction } from '../lib/codec'
-import { isMemberSealed, upsertMember, type RoomMode, type RoomScope, type RoomMember } from '../lib/roomStore'
-import { buildRoomInviteUrl, buildMemberContribUrl, buildMemberEnvelope, buildRetractEnvelope, buildForwardEnvelope, buildForwardRetractEnvelope, memberFromEnvelope, modeAllowed, scopeAllowed, TOURNAMENT_START } from '../lib/room'
+import { upsertMember, type RoomMode, type RoomScope, type RoomMember } from '../lib/roomStore'
+import { buildRoomInviteUrl, buildMemberContribUrl, buildMemberEnvelope, buildRetractEnvelope, buildForwardEnvelope, buildForwardRetractEnvelope, memberFromEnvelope, modeAllowed, scopeAllowed } from '../lib/room'
 import { sendRoomInvites } from '../lib/inbox'
 import { useRooms } from '../composables/useRooms'
 import { shortKey } from '../lib/rating'
 import RoomLeaderboard from './RoomLeaderboard.vue'
 import RoomCompare from './RoomCompare.vue'
-import SocialShareButtons from './SocialShareButtons.vue'
+import RoomMatches from './RoomMatches.vue'
 import { trackEvent } from '../lib/analytics'
 
 const { t } = useI18n()
@@ -63,7 +62,7 @@ async function doJoin () {
 // --- Detalle de sala --------------------------------------------------------
 // La sub-pestaña activa vive en useRooms (compartida con barra lateral/header).
 const rtab = roomTab
-function goRoomTab (tab: 'table' | 'compare' | 'members') {
+function goRoomTab (tab: 'table' | 'compare' | 'matches') {
   rtab.value = tab
   trackEvent('sala/' + tab)
 }
@@ -87,18 +86,6 @@ const myMember = computed(() => activeRoom.value?.members.find((m) => m.publicke
 // Mi entrada pero REENVIADA por otro (alguien aportó mi pronóstico por mí): el
 // selector sigue visible — aportar el mío en persona la reemplaza (rango autor).
 const forwardedMe = computed(() => (myMember.value?.via ? myMember.value : null))
-// Miembros visibles (sin lápidas de borrado).
-const liveMembers = computed(() => activeRoom.value?.members.filter((m) => !m.deleted) ?? [])
-
-// Estado del sello de tiempo de un miembro: cuándo existió su pronóstico, según
-// el sellador (signer.closer.click). 'a tiempo' = sellado antes del inicio.
-function sealInfo (m: RoomMember): { cls: string; icon: string; text: string } {
-  const fmt = (ts: number) => new Date(ts).toLocaleString()
-  if (m.sealedAt == null) return { cls: 'none', icon: '—', text: t('rooms.sealNone') }
-  if (!m.sealValid) return { cls: 'bad', icon: '⚠', text: t('rooms.sealInvalid') }
-  if (m.sealedAt < TOURNAMENT_START) return { cls: 'ok', icon: '🕓', text: t('rooms.sealOkAt', { date: fmt(m.sealedAt) }) }
-  return { cls: 'late', icon: '⚠', text: t('rooms.sealLate', { date: fmt(m.sealedAt) }) }
-}
 
 function modeName (m: RoomMode): string {
   if (m === 'free') return t('rooms.modeFree')
@@ -206,19 +193,10 @@ async function doContributeFriend (entry: SavedPrediction) {
   } catch (e) { friendError.value = e instanceof Error ? e.message : String(e) } finally { friendBusy.value = false }
 }
 
-// Retirar MI reenvío (dos toques en vez de confirm(): sin diálogos nativos).
-const removePending = ref<string | null>(null)
-let removePendingTimer: number | null = null
+// Retirar MI reenvío (el doble-toque de confirmación vive en RoomLeaderboard).
 async function removeFriendContrib (m: RoomMember) {
   const room = activeRoom.value
   if (!room || m.via !== myPubkey.value) return
-  if (removePending.value !== m.publickey) {
-    removePending.value = m.publickey
-    if (removePendingTimer != null) clearTimeout(removePendingTimer)
-    removePendingTimer = window.setTimeout(() => { removePending.value = null }, 3000)
-    return
-  }
-  removePending.value = null
   const env = await buildForwardRetractEnvelope(room.id, m.publickey, Date.now())
   const parsed = await memberFromEnvelope(env)
   if (!parsed) return
@@ -227,33 +205,23 @@ async function removeFriendContrib (m: RoomMember) {
   broadcastEnvelope(env)
 }
 
-// Invitación (QR + enlace + contactos)
+// Invitar CONTACTOS por el proxy (el QR/enlace/redes vive en el modal de
+// compartir de arriba; aquí solo se arma la URL firmada para los envíos).
 const inviteUrl = ref('')
-const inviteQr = ref('')
-const inviteCopied = ref(false)
 const selectedContacts = ref<Set<string>>(new Set())
 const inviting = ref(false)
 const inviteStatus = ref('')
 
 async function buildInvite () {
   const room = activeRoom.value
-  inviteUrl.value = ''; inviteQr.value = ''
+  inviteUrl.value = ''
   if (!room) return
   try {
     const { url } = await buildRoomInviteUrl({
       id: room.id, name: room.name, mode: room.mode, scope: room.scope ?? 'free', sealedUntil: room.sealedUntil, createdAt: room.createdAt,
     })
     inviteUrl.value = url
-    await nextTick()
-    inviteQr.value = await QRCode.toDataURL(url, { margin: 1, width: 360 })
   } catch (e) { console.warn('No se pudo armar la invitación:', e) }
-}
-async function copyInvite () {
-  try { await navigator.clipboard.writeText(inviteUrl.value); inviteCopied.value = true; setTimeout(() => { inviteCopied.value = false }, 1800) } catch { /* */ }
-}
-function shareInviteNative () {
-  if (navigator.share) navigator.share({ url: inviteUrl.value, title: activeRoom.value?.name }).catch(() => {})
-  else copyInvite()
 }
 function toggleContact (pk: string) {
   const s = new Set(selectedContacts.value)
@@ -357,23 +325,13 @@ watch(activeRoom, (r) => {
     <nav class="rtabs">
       <button :class="{ on: rtab === 'table' }" @click="goRoomTab('table')">{{ t('rooms.tabTable') }}</button>
       <button :class="{ on: rtab === 'compare' }" @click="goRoomTab('compare')">{{ t('rooms.tabCompare') }}</button>
-      <button :class="{ on: rtab === 'members' }" @click="goRoomTab('members')">{{ t('rooms.tabMembers') }}</button>
+      <button :class="{ on: rtab === 'matches' }" data-testid="rtab-matches" @click="goRoomTab('matches')">{{ t('rooms.tabMatches') }}</button>
     </nav>
 
-    <RoomLeaderboard v-if="rtab === 'table'" :room="activeRoom" :official="official" :my-pubkey="myPubkey" />
-    <RoomCompare v-else-if="rtab === 'compare'" :room="activeRoom" :official="official" :my-pubkey="myPubkey" />
+    <template v-if="rtab === 'table'">
+      <RoomLeaderboard :room="activeRoom" :official="official" :my-pubkey="myPubkey" @remove-forward="removeFriendContrib" />
 
-    <template v-else>
-      <h4 class="grp-h">{{ t('rooms.invite') }}</h4>
-      <div class="invite-box">
-        <img v-if="inviteQr" :src="inviteQr" class="qr" :alt="t('rooms.inviteQr')" />
-        <div class="invite-actions">
-          <button class="go" @click="copyInvite">{{ inviteCopied ? t('rooms.copied') : t('rooms.copyLink') }}</button>
-          <button class="go ghost" @click="shareInviteNative">{{ t('common.share') }}</button>
-        </div>
-      </div>
-      <SocialShareButtons v-if="inviteUrl" :url="inviteUrl" :text="activeRoom.name" class="social-row" />
-
+      <!-- Invitar contactos por el proxy (QR/enlace/redes: en compartir, arriba). -->
       <h4 class="grp-h">{{ t('rooms.inviteContacts') }}</h4>
       <p v-if="!contacts.length" class="empty">{{ t('identity.noContacts') }}</p>
       <div v-for="c in contacts" :key="c.publickey" class="contact" @click="toggleContact(c.publickey)">
@@ -385,21 +343,9 @@ watch(activeRoom, (r) => {
         {{ inviting ? '…' : t('rooms.sendInvites', { n: selectedContacts.size }) }}
       </button>
       <p v-if="inviteStatus" class="status">{{ inviteStatus }}</p>
-
-      <h4 class="grp-h">{{ t('rooms.membersList') }} ({{ liveMembers.length }})</h4>
-      <p v-if="!liveMembers.length" class="empty">{{ t('rooms.noMembers') }}</p>
-      <div v-for="m in liveMembers" :key="m.publickey" class="member">
-        <span class="badge" :class="{ ok: m.verified }">{{ m.verified ? '✓' : '⚠' }}</span>
-        <span class="c-nm">{{ m.nickname || t('common.anonymous') }}<span v-if="m.publickey === myPubkey" class="you">{{ t('rooms.you') }}</span><small v-if="m.name" class="pname"> · {{ m.name }}</small></span>
-        <span v-if="m.via" class="tag via" :title="t('rooms.contributedBy', { n: m.viaNick || shortKey(m.via) })">↪ {{ m.via === myPubkey ? t('rooms.you2') : (m.viaNick || shortKey(m.via)) }}</span>
-        <span v-if="isMemberSealed(activeRoom, m, myPubkey)" class="tag gold">🔒</span>
-        <span class="seal" :class="sealInfo(m).cls" :title="sealInfo(m).text">{{ sealInfo(m).icon }}</span>
-        <span class="mono">{{ shortKey(m.publickey) }}</span>
-        <button v-if="m.via === myPubkey" class="go danger mini-share" @click="removeFriendContrib(m)">
-          {{ removePending === m.publickey ? t('rooms.removeFriendSure') : t('rooms.removeFriend') }}
-        </button>
-      </div>
     </template>
+    <RoomCompare v-else-if="rtab === 'compare'" :room="activeRoom" :official="official" :my-pubkey="myPubkey" />
+    <RoomMatches v-else :room="activeRoom" :official="official" :my-pubkey="myPubkey" />
   </div>
 </template>
 
