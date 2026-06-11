@@ -22,7 +22,7 @@ import {
   fetchOfficialFeed, buildOfficial, buildPublishItems, publishOfficial, isAdminIdentity, type Feed,
 } from './lib/officialResults'
 import {
-  allFixtures, fixturesToday, fixturePredictable, findDailyEntry, ensureDailyEntry,
+  allFixtures, fixturesTodayTomorrow, fixturePredictable, findDailyEntry, ensureDailyEntry,
   applyDailyPicks, sealMissingPicks, shouldShowDailyPopup, dismissDailyPopup, nowMs,
 } from './lib/matchday'
 import GroupCard from './components/GroupCard.vue'
@@ -308,10 +308,10 @@ const dailySealing = ref(false)
 const dailySealResult = ref<{ sealed: number; failed: number } | null>(null)
 useBackLayer(dailyPopupOpen)
 
-// Partidos de HOY aún pronosticables (para el popup).
+// Partidos de HOY y MAÑANA aún pronosticables (para el popup).
 const dailyTodayMatches = computed(() => {
   const now = nowMs()
-  return fixturesToday(allFixtures(officialEntry.value), now).filter((f) => fixturePredictable(f, now))
+  return fixturesTodayTomorrow(allFixtures(officialEntry.value), now).filter((f) => fixturePredictable(f, now))
 })
 
 // Guarda y SELLA picks (popup y sección comparten este camino). Tras guardar,
@@ -365,7 +365,7 @@ function dailyPopupToSection () {
 }
 
 // El popup sale en visitas "limpias" (sin enlace entrante) cuando hay partidos
-// de HOY sin pronosticar; el primer arranque se lo deja al tutorial.
+// de HOY o MAÑANA sin pronosticar; el primer arranque se lo deja al tutorial.
 function maybeShowDailyPopup () {
   let tutorialPending = false
   try { tutorialPending = !localStorage.getItem('mundial.tutorial') } catch { /* */ }

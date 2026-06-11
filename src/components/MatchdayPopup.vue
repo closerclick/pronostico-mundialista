@@ -1,19 +1,19 @@
 <script setup lang="ts">
 // Popup DIARIO del pronóstico de la fecha: al abrir la app muestra los partidos
-// de HOY que aún se pueden pronosticar (antes del kickoff), recoge los
+// de HOY y MAÑANA que aún se pueden pronosticar (antes del kickoff), recoge los
 // marcadores y, al guardar, la app SELLA cada pronóstico con el TSA. Mañana,
-// con la nueva fecha, vuelve a aparecer con los partidos del día.
+// con la nueva fecha, vuelve a aparecer con los partidos pendientes.
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { teamById } from '../lib/teams'
 import type { MatchResult, Results } from '../lib/standings'
-import { fixturePhaseKey, type Fixture } from '../lib/matchday'
+import { fixturePhaseKey, dayKey, nowMs, type Fixture } from '../lib/matchday'
 
 const { t, locale } = useI18n()
 
 const props = defineProps<{
   open: boolean
-  /** Partidos de HOY aún pronosticables (con equipos definidos). */
+  /** Partidos de HOY y MAÑANA aún pronosticables (orden cronológico). */
   matches: Fixture[]
   /** Picks actuales de la entrada diaria (para precargar). */
   picks: Results
@@ -62,6 +62,17 @@ function hourOf (f: Fixture): string {
   return new Date(f.kickoff).toLocaleTimeString(locale.value, { hour: '2-digit', minute: '2-digit' })
 }
 
+// Separadores de día: la lista llega en orden cronológico (hoy, luego mañana).
+function isNewDay (i: number): boolean {
+  if (i === 0) return true
+  return dayKey(props.matches[i]!.kickoff) !== dayKey(props.matches[i - 1]!.kickoff)
+}
+function dayHeader (f: Fixture): string {
+  const label = dayKey(f.kickoff) === dayKey(nowMs()) ? t('daily.today') : t('daily.tomorrow')
+  const date = new Date(f.kickoff).toLocaleDateString(locale.value, { weekday: 'long', day: 'numeric', month: 'long' })
+  return `${label} · ${date}`
+}
+
 // Un borrador está completo si tiene los dos goles (0..15).
 function parsedScore (d: Draft): { gh: number; ga: number } | null {
   if (d.gh === '' || d.ga === '') return null
@@ -108,11 +119,12 @@ function save () {
     <div class="daily-modal">
       <button class="x" data-testid="daily-popup-close" :aria-label="t('common.close')" @click="emit('close')">×</button>
       <h3>⚽ {{ t('daily.popupTitle') }}</h3>
-      <p class="sub">{{ new Date().toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long' }) }}</p>
       <p class="hint">{{ t('daily.popupHint') }}</p>
 
       <div class="list">
-        <div v-for="f in matches" :key="f.id" class="row" data-testid="daily-popup-match">
+        <template v-for="(f, i) in matches" :key="f.id">
+          <p v-if="isNewDay(i)" class="sub">{{ dayHeader(f) }}</p>
+          <div class="row" data-testid="daily-popup-match">
           <div class="meta">
             <span class="ph">{{ phase(f) }}</span>
             <span class="hr">{{ hourOf(f) }}</span>
@@ -138,7 +150,8 @@ function save () {
             <button :class="{ on: drafts[f.id]!.adv === 'h' }" :disabled="sealing" @click="drafts[f.id]!.adv = 'h'">{{ flag(f.home) }} {{ code(f.home) }}</button>
             <button :class="{ on: drafts[f.id]!.adv === 'a' }" :disabled="sealing" @click="drafts[f.id]!.adv = 'a'">{{ flag(f.away) }} {{ code(f.away) }}</button>
           </div>
-        </div>
+          </div>
+        </template>
       </div>
 
       <p v-if="sealResult" class="done" data-testid="daily-popup-done">
@@ -169,7 +182,7 @@ function save () {
   max-height: 88vh; overflow-y: auto;
 }
 .daily-modal h3 { color: var(--azure); margin-bottom: 0.15rem; }
-.sub { color: var(--text); font-weight: 700; font-size: 0.85rem; text-transform: capitalize; }
+.sub { color: var(--text); font-weight: 700; font-size: 0.85rem; text-transform: capitalize; margin-top: 0.3rem; }
 .hint { color: var(--muted); font-size: 0.78rem; margin: 0.35rem 0 0.8rem; }
 .x { position: absolute; top: 0.5rem; right: 0.7rem; background: none; border: none; color: var(--muted); font-size: 1.5rem; cursor: pointer; line-height: 1; }
 

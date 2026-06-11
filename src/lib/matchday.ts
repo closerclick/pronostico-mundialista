@@ -121,6 +121,16 @@ export function fixturesToday (fixtures: Fixture[], now = nowMs()): Fixture[] {
   return fixtures.filter((f) => dayKey(f.kickoff) === today)
 }
 
+/** Partidos de HOY y MAÑANA (día local de `now`), para el popup diario. */
+export function fixturesTodayTomorrow (fixtures: Fixture[], now = nowMs()): Fixture[] {
+  const today = dayKey(now)
+  const tomorrow = dayKey(now + 86_400_000)
+  return fixtures.filter((f) => {
+    const k = dayKey(f.kickoff)
+    return k === today || k === tomorrow
+  })
+}
+
 /** Etiqueta de fase legible vía i18n: ['group.title', {letter}] o ['bracket.r32']. */
 export function fixturePhaseKey (f: Fixture): { key: string; params?: Record<string, string> } {
   if (f.stage === 'group') return { key: 'group.title', params: { letter: GROUPS[f.group!]!.letter } }
@@ -391,13 +401,13 @@ export function dismissDailyPopup (now = nowMs()): void {
 }
 
 /**
- * ¿Corresponde mostrar el popup? Hay partidos HOY aún pronosticables sin pick,
+ * ¿Corresponde mostrar el popup? Hay partidos HOY o MAÑANA aún pronosticables sin pick,
  * y el popup de hoy no fue atendido todavía. (Mañana, nueva fecha → reaparece.)
  */
 export function shouldShowDailyPopup (fixtures: Fixture[], entry: SavedPrediction | null, now = nowMs()): boolean {
   try { if (localStorage.getItem(DISMISS_KEY) === dayKey(now)) return false } catch { /* */ }
   const picks = entry?.results ?? {}
-  return fixturesToday(fixtures, now).some((f) => fixturePredictable(f, now) && !picks[f.id])
+  return fixturesTodayTomorrow(fixtures, now).some((f) => fixturePredictable(f, now) && !picks[f.id])
 }
 
 export { teamById }
