@@ -39,6 +39,7 @@ const props = defineProps<{
   // Solo cuando se edita la entrada de "Resultados oficiales": habilita traer del
   // relay y publicar correcciones manuales (firmadas por el vault).
   isOfficial?: boolean
+  isAdmin?: boolean
   officialStatus?: 'idle' | 'loading' | 'ok' | 'offline'
   officialFeed?: Feed | null
   officialUpdatedAt?: number
@@ -301,7 +302,7 @@ function clearAll (): void {
         <button class="util official" :disabled="officialStatus === 'loading'" @click="emit('refresh-official')">
           {{ officialStatus === 'loading' ? t('results.officialLoading') : t('results.officialRefresh') }}
         </button>
-        <button class="util publish" :disabled="publishStatus === 'publishing'" @click="emit('publish-official')">
+        <button v-if="isAdmin" class="util publish" :disabled="publishStatus === 'publishing'" @click="emit('publish-official')">
           {{ t('results.officialPublish') }}
         </button>
       </template>

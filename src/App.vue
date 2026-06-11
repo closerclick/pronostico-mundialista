@@ -16,7 +16,7 @@ import {
   loadLibrary, saveLibrary, getActiveId, setActiveId, genId, hydrateLibrary, type SavedPrediction,
 } from './lib/store'
 import {
-  fetchOfficialFeed, buildOfficial, buildPublishItems, publishOfficial, type Feed,
+  fetchOfficialFeed, buildOfficial, buildPublishItems, publishOfficial, isAdminIdentity, type Feed,
 } from './lib/officialResults'
 import GroupCard from './components/GroupCard.vue'
 import StandingsTable from './components/StandingsTable.vue'
@@ -538,7 +538,15 @@ const officialFeed = ref<Feed | null>(null)
 const officialStatus = ref<'idle' | 'loading' | 'ok' | 'offline'>('idle')
 const officialUpdatedAt = ref(0)
 const publishStatus = ref<'idle' | 'publishing' | 'ok' | 'error' | 'unauthorized' | 'nochange'>('idle')
+// ¿Mi identidad está autorizada a publicar? (para mostrar el botón solo al admin)
+const isOfficialAdmin = ref(false)
 let officialPoll: number | null = null
+
+async function updateAdminStatus (): Promise<void> {
+  if (!officialFeed.value) { isOfficialAdmin.value = false; return }
+  const idi = await getIdentity()
+  isOfficialAdmin.value = await isAdminIdentity(officialFeed.value, idi?.me?.publickey ?? null)
+}
 
 function applyOfficialBuild (build: ReturnType<typeof buildOfficial>): boolean {
   ensureOfficialEntry()
@@ -572,6 +580,7 @@ async function refreshOfficial (force = false): Promise<void> {
   if (!sf) { officialStatus.value = 'offline'; return }
   officialFeed.value = sf.data
   officialUpdatedAt.value = sf.data.updatedAt || Date.now()
+  void updateAdminStatus()
   if (force || !activeEntry.value?.official) applyOfficialBuild(buildOfficial(sf.data))
   officialStatus.value = 'ok'
 }
@@ -1155,6 +1164,7 @@ onUnmounted(() => {
           :readonly="readonly"
           :official="isOfficial ? null : officialEntry"
           :is-official="isOfficial"
+          :is-admin="isOfficialAdmin"
           :official-status="officialStatus"
           :official-feed="officialFeed"
           :official-updated-at="officialUpdatedAt"

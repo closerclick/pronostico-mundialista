@@ -42,6 +42,10 @@ export interface Feed {
   providers: string[]; providerLabels: Record<string, string>
   providerHealth: Record<string, { ok: boolean; count: number; error: string | null }>
   matches: FeedMatch[]; overrides: FeedMatch[]; publickey: string
+  // Thumbprints (pubkeyId hex) de los admins autorizados a publicar. Públicos:
+  // solo sirven para que la UI muestre "Publicar" a un admin (la seguridad real
+  // es la verificación de firma + allowlist en el relay).
+  admins?: string[]
 }
 export interface SignedFeed { data: Feed; signature: string }
 
@@ -262,6 +266,27 @@ export async function publishOfficial (items: OverrideItem[], id: IdentityInstan
     if (!res.ok) return { ok: false, status: res.status, error: j.error || ('http ' + res.status) }
     return { ok: true, changed: j.changed }
   } catch (e) { return { ok: false, error: (e as Error)?.message || 'error' } }
+}
+
+// Thumbprint (pubkeyId hex) de una identidad: SHA-256 del JWK canónico {crv,kty,x,y}.
+// Idéntico al pubkeyId del relay → sirve para saber si soy admin.
+async function sha256hex (s: string): Promise<string> {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s) as BufferSource)
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+export async function pubkeyThumbprint (jwkString: string): Promise<string | null> {
+  try {
+    const j = JSON.parse(jwkString)
+    return await sha256hex(canonicalStringify({ crv: j.crv, kty: j.kty, x: j.x, y: j.y }))
+  } catch { return null }
+}
+
+/** ¿La identidad `jwkString` está en la allowlist de admins del feed? */
+export async function isAdminIdentity (feed: Feed, jwkString: string | null | undefined): Promise<boolean> {
+  const admins = feed.admins || []
+  if (!admins.length || !jwkString) return false
+  const tp = await pubkeyThumbprint(jwkString)
+  return !!tp && admins.includes(tp)
 }
 
 /** Resumen de fuentes activas para la UI (etiqueta de procedencia). */
