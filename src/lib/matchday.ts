@@ -393,19 +393,12 @@ export function scoreMatchdayPicks (
 
 // --- Popup diario ---------------------------------------------------------------
 
-const DISMISS_KEY = 'mundial.daily.dismissed.v1'
-
-/** Marca el popup de HOY como atendido (guardado o descartado). */
-export function dismissDailyPopup (now = nowMs()): void {
-  try { localStorage.setItem(DISMISS_KEY, dayKey(now)) } catch { /* */ }
-}
-
 /**
- * ¿Corresponde mostrar el popup? Hay partidos HOY o MAÑANA aún pronosticables sin pick,
- * y el popup de hoy no fue atendido todavía. (Mañana, nueva fecha → reaparece.)
+ * ¿Corresponde mostrar el popup? Hay partidos HOY o MAÑANA aún pronosticables
+ * sin pick. INSISTE en cada apertura/recarga mientras falten picks (cerrarlo
+ * solo lo oculta en la sesión actual); con todo pronosticado deja de salir.
  */
 export function shouldShowDailyPopup (fixtures: Fixture[], entry: SavedPrediction | null, now = nowMs()): boolean {
-  try { if (localStorage.getItem(DISMISS_KEY) === dayKey(now)) return false } catch { /* */ }
   const picks = entry?.results ?? {}
   return fixturesTodayTomorrow(fixtures, now).some((f) => fixturePredictable(f, now) && !picks[f.id])
 }

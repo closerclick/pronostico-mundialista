@@ -23,7 +23,7 @@ import {
 } from './lib/officialResults'
 import {
   allFixtures, fixturesTodayTomorrow, fixturePredictable, findDailyEntry, ensureDailyEntry,
-  applyDailyPicks, sealMissingPicks, shouldShowDailyPopup, dismissDailyPopup, nowMs,
+  applyDailyPicks, sealMissingPicks, shouldShowDailyPopup, nowMs,
 } from './lib/matchday'
 import GroupCard from './components/GroupCard.vue'
 import StandingsTable from './components/StandingsTable.vue'
@@ -355,7 +355,6 @@ function shareDaily () {
 function closeDailyPopup () {
   dailyPopupOpen.value = false
   dailySealResult.value = null
-  dismissDailyPopup()
 }
 
 function dailyPopupToSection () {

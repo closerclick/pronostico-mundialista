@@ -99,13 +99,12 @@ test('el popup diario ofrece los partidos de hoy y sella cada pick', async ({ br
   await expect(page.getByTestId('daily-popup-done')).toContainText('✓')
   expect(signer.count()).toBe(2) // un sello POR PARTIDO guardado
 
-  // Cerrar descarta el popup por HOY: recargar no lo vuelve a mostrar.
+  // Cerrar solo lo oculta en esta sesión: mientras queden partidos sin pick,
+  // el popup INSISTE en cada recarga.
   await page.getByTestId('daily-popup-later').click()
   await expect(popup).toBeHidden()
   await page.reload()
-  await page.getByTestId('identity-btn').waitFor()
-  await page.waitForTimeout(2500)
-  await expect(page.getByTestId('daily-popup')).toHaveCount(0)
+  await page.getByTestId('daily-popup').waitFor({ timeout: 15_000 })
 
   await context.close()
 })
