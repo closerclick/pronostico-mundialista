@@ -33,6 +33,12 @@ let instance: CloserClickTutorial | null = null
 export function startAppTutorial (ctx: TutorialCtx): CloserClickTutorial | null {
   if (instance) return instance
 
+  // El paquete persiste lo visto POR PASO (`mundial.tutorial:seen:<id>`); la
+  // clave llana `mundial.tutorial` es nuestra marca de "tour terminado" (se
+  // escribe abajo en cc-tutorial-done). Si ya está, ni se monta el componente:
+  // es lo que App.vue y los e2e consultan para saber que no habrá burbujas.
+  try { if (localStorage.getItem('mundial.tutorial')) return null } catch { /* */ }
+
   // En móvil, abrir/cerrar el cajón requiere esperar su animación (0.25s) para
   // que el objetivo termine visible; en escritorio el cajón es fijo (no-op).
   const openDrawer = async () => { if (isMobile()) { ctx.setSidebar(true); await sleep(300) } }
@@ -142,6 +148,7 @@ export function startAppTutorial (ctx: TutorialCtx): CloserClickTutorial | null 
   // sección Pronósticos y, en móvil, el cajón cerrado.
   if (instance) {
     instance.addEventListener('cc-tutorial-done', () => {
+      try { localStorage.setItem('mundial.tutorial', 'done') } catch { /* */ }
       ctx.setSection('predictions')
       if (isMobile()) ctx.setSidebar(false)
     })

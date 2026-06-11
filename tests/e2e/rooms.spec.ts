@@ -39,6 +39,12 @@ window.__TEST_VAULT_PROMISE__ = (async () => {
 
 async function installVault (context: BrowserContext, nick: string) {
   await context.addInitScript(vaultInit(nick))
+  // Reloj ANTES del torneo (sin partidos hoy/mañana) + tutorial ya visto: ni el
+  // popup diario ni las burbujas se cruzan con los clicks de este spec.
+  await context.addInitScript(`
+    window.__MUNDIAL_TEST_NOW__ = ${Date.UTC(2026, 4, 1, 12)};
+    try { localStorage.setItem('mundial.tutorial', '{"done":true}'); } catch (e) {}
+  `)
 }
 
 // Siembra una sala compartida + un pronóstico propio en localStorage (evita el
