@@ -133,9 +133,11 @@ const profileTheme: Record<string, string> = {
                   :title="!r.isMe ? t('rooms.member') : undefined">
               {{ r.member.nickname || t('common.anonymous') }}
               <span v-if="r.isMe" class="you">{{ t('rooms.you') }}</span>
+              <span v-if="r.member.name" class="pname">· {{ r.member.name }}</span>
             </span>
             <span class="vrow">
               <span class="badge" :class="{ ok: r.member.verified }">{{ r.member.verified ? '✓' : '⚠' }}</span>
+              <span v-if="r.member.via" class="via">↪ {{ t('rooms.contributedBy', { n: r.member.via === myPubkey ? t('rooms.you2') : (r.member.viaNick || shortKey(r.member.via)) }) }}</span>
               <span class="mono">{{ shortKey(r.member.publickey) }}</span>
               <span v-if="!r.isMe && repPct(r.member.publickey) != null" class="rep" title="Confianza (ponderada por tu web-of-trust)">{{ repPct(r.member.publickey) }}%</span>
               <span v-if="!r.isMe && afinPct(r.member.publickey) != null" class="rep afin" title="Afinidad de tu red">♥{{ afinPct(r.member.publickey) }}%</span>
@@ -180,8 +182,10 @@ const profileTheme: Record<string, string> = {
 .nm.clickable { cursor: pointer; }
 .nm.clickable:hover { color: var(--azure); text-decoration: underline; }
 .you { font-size: 0.65rem; background: var(--azure); color: #042038; border-radius: 5px; padding: 0 0.3rem; font-weight: 800; }
-.vrow { display: flex; align-items: center; gap: 0.35rem; margin-top: 0.1rem; }
+.vrow { display: flex; align-items: center; gap: 0.35rem; margin-top: 0.1rem; flex-wrap: wrap; }
 .badge { font-size: 0.7rem; color: #e0a; }
+.via { font-size: 0.66rem; color: var(--azure); border: 1px solid var(--azure); border-radius: 4px; padding: 0 0.3rem; white-space: nowrap; }
+.pname { font-size: 0.78rem; color: var(--muted); font-weight: 400; }
 .badge.ok { color: var(--green); }
 .mono { font-family: monospace; font-size: 0.66rem; color: var(--muted); }
 .rep { font-size: 0.66rem; font-weight: 700; color: var(--green); background: rgba(0,0,0,.18); border-radius: 4px; padding: 0 0.25rem; }

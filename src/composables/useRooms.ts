@@ -106,6 +106,11 @@ function updateSyncFrag (env: string | null) {
   sync?.updateMyEnv(env)
 }
 
+/** Difunde un sobre puntual (reenvío de un amigo / su retiro) en la sala activa. */
+function broadcastEnvelope (env: string) {
+  sync?.broadcastEnv(env)
+}
+
 /**
  * Aplica un sobre firmado recibido a la sala que indica (verificado y por
  * last-write-wins). Sirve tanto para la sync de la sala activa como para el
@@ -226,7 +231,7 @@ export function useRooms () {
     rooms, activeRoom, activeRoomId, peerCount, syncStatus, myPubkey, myNick, contacts, unreachable, roomTab, roomShareOpen,
     initRooms, reloadRooms, loadIdentityInfo,
     openRoom, shareRoom, closeRoom, createRoom, joinByLink, leaveRoom, persist,
-    startSync, stopSync, ensureSync, updateSyncFrag,
+    startSync, stopSync, ensureSync, updateSyncFrag, broadcastEnvelope,
     importRoomInvite, importMemberContrib, applyEnvelope, getActiveRoomId,
   }
 }

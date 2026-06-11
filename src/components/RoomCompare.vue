@@ -98,6 +98,7 @@ function isCorrect (officialId: number | null | undefined, id: number | null): b
             <td class="row-h">
               {{ c.member.nickname || t('common.anonymous') }}
               <span v-if="c.isMe" class="you">{{ t('rooms.you') }}</span>
+              <span v-if="c.member.name" class="pname">· {{ c.member.name }}</span>
             </td>
             <template v-if="c.sealed">
               <td :colspan="dim === 'final' ? 3 : 12" class="sealed">🔒 {{ t('rooms.sealedCell') }}</td>
@@ -136,6 +137,7 @@ function isCorrect (officialId: number | null | undefined, id: number | null): b
 .row-h { text-align: left; font-weight: 700; position: sticky; left: 0; background: var(--panel); }
 .grp { padding: 0.4rem 0.3rem; }
 .you { font-size: 0.6rem; background: var(--azure); color: #042038; border-radius: 5px; padding: 0 0.25rem; font-weight: 800; margin-left: 0.3rem; }
+.pname { font-size: 0.74rem; color: var(--muted); font-weight: 400; }
 .hit { background: rgba(78, 222, 128, 0.16); color: var(--green); font-weight: 700; }
 .dash { color: var(--muted); }
 .sealed { color: var(--gold); font-style: italic; }

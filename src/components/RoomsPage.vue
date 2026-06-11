@@ -6,7 +6,7 @@ import { buildShareUrl } from '../lib/share'
 import type { SavedPrediction } from '../lib/store'
 import { decodePrediction } from '../lib/codec'
 import { isMemberSealed, upsertMember, type RoomMode, type RoomScope, type RoomMember } from '../lib/roomStore'
-import { buildRoomInviteUrl, buildMemberContribUrl, buildMemberEnvelope, buildRetractEnvelope, memberFromEnvelope, modeAllowed, scopeAllowed, TOURNAMENT_START } from '../lib/room'
+import { buildRoomInviteUrl, buildMemberContribUrl, buildMemberEnvelope, buildRetractEnvelope, buildForwardEnvelope, buildForwardRetractEnvelope, memberFromEnvelope, modeAllowed, scopeAllowed, TOURNAMENT_START } from '../lib/room'
 import { sendRoomInvites } from '../lib/inbox'
 import { useRooms } from '../composables/useRooms'
 import { shortKey } from '../lib/rating'
@@ -28,7 +28,7 @@ const props = defineProps<{
 
 const {
   activeRoom, myPubkey, myNick, contacts, unreachable, roomTab,
-  createRoom, joinByLink, persist, updateSyncFrag,
+  createRoom, joinByLink, persist, updateSyncFrag, broadcastEnvelope,
 } = useRooms()
 
 // --- Home (sin sala activa): crear + unirse, inline ------------------------
@@ -160,6 +160,70 @@ async function shareMyContrib () {
   else { try { await navigator.clipboard.writeText(url); contribShared.value = true; setTimeout(() => { contribShared.value = false }, 1800) } catch { /* */ } }
 }
 
+// --- Aportar el pronóstico de un AMIGO (importado, firmado por él) ----------
+// El frag firmado original del amigo (sharedUrl) prueba la autoría por sí solo;
+// va envuelto en un sobre v4 firmado por mí (via). En la sala cuenta a nombre
+// del amigo, y lo que él aporte en persona siempre le gana a mi reenvío.
+
+// ¿Se puede reenviar a este autor? No si ya está en la sala (él mismo o por
+// reenvío vivo), ni si él mismo borró su aporte (su lápida manda).
+function canForwardFriend (author: string): boolean {
+  const cur = activeRoom.value?.members.find((m) => m.publickey === author)
+  if (!cur) return true
+  if (!cur.deleted) return false
+  return !!cur.via // lápida de reenvío → se puede re-aportar; lápida propia → no
+}
+const friendPredictions = computed(() =>
+  props.library.filter((p) =>
+    !p.mine && !p.official && p.author?.publickey && p.sharedUrl &&
+    p.author.publickey !== myPubkey.value && canForwardFriend(p.author.publickey)),
+)
+const friendBusy = ref(false)
+const friendError = ref('')
+function contributeFriend (entry: SavedPrediction) {
+  const room = activeRoom.value
+  if (!room || friendBusy.value) return
+  friendError.value = ''
+  if (!canContribute(entry)) { friendError.value = t('rooms.modeMismatch'); return }
+  ensureNick(() => { void doContributeFriend(entry) })
+}
+async function doContributeFriend (entry: SavedPrediction) {
+  const room = activeRoom.value
+  if (!room || !entry.sharedUrl) return
+  friendBusy.value = true
+  try {
+    const frag = entry.sharedUrl.split('#')[1] ?? ''
+    const env = await buildForwardEnvelope(room.id, frag, Date.now(), myNick.value || undefined)
+    const parsed = await memberFromEnvelope(env)
+    if (!parsed) throw new Error(t('rooms.contribError'))
+    upsertMember(room, parsed.member)
+    persist()
+    broadcastEnvelope(env)
+    trackEvent('sala/aporte-amigo')
+  } catch (e) { friendError.value = e instanceof Error ? e.message : String(e) } finally { friendBusy.value = false }
+}
+
+// Retirar MI reenvío (dos toques en vez de confirm(): sin diálogos nativos).
+const removePending = ref<string | null>(null)
+let removePendingTimer: number | null = null
+async function removeFriendContrib (m: RoomMember) {
+  const room = activeRoom.value
+  if (!room || m.via !== myPubkey.value) return
+  if (removePending.value !== m.publickey) {
+    removePending.value = m.publickey
+    if (removePendingTimer != null) clearTimeout(removePendingTimer)
+    removePendingTimer = window.setTimeout(() => { removePending.value = null }, 3000)
+    return
+  }
+  removePending.value = null
+  const env = await buildForwardRetractEnvelope(room.id, m.publickey, Date.now())
+  const parsed = await memberFromEnvelope(env)
+  if (!parsed) return
+  upsertMember(room, parsed.member)
+  persist()
+  broadcastEnvelope(env)
+}
+
 // Invitación (QR + enlace + contactos)
 const inviteUrl = ref('')
 const inviteQr = ref('')
@@ -274,6 +338,18 @@ watch(activeRoom, (r) => {
       </span>
     </div>
 
+    <!-- Aportar pronósticos de AMIGOS (importados, firmados por ellos). -->
+    <div v-if="friendPredictions.length" class="contribute friend" data-testid="friend-contribute">
+      <p class="contribute-h">{{ t('rooms.friendContribPrompt') }}</p>
+      <p class="hint">{{ t('rooms.friendContribHint') }}</p>
+      <div v-for="p in friendPredictions" :key="p.id" class="pick">
+        <span class="pick-nm">{{ p.author?.nickname || t('common.anonymous') }} <small>{{ p.name }} · {{ modeName(entryMode(p) as RoomMode) }}<template v-if="entryScope(p) !== 'all'"> · {{ scopeName(entryScope(p) as RoomScope) }}</template></small></span>
+        <button class="go" :disabled="friendBusy || !canContribute(p)"
+          :title="!canContribute(p) ? t('rooms.modeMismatch') : ''" @click="contributeFriend(p)">{{ t('rooms.contribute') }}</button>
+      </div>
+      <p v-if="friendError" class="err">{{ friendError }}</p>
+    </div>
+
     <nav class="rtabs">
       <button :class="{ on: rtab === 'table' }" @click="goRoomTab('table')">{{ t('rooms.tabTable') }}</button>
       <button :class="{ on: rtab === 'compare' }" @click="goRoomTab('compare')">{{ t('rooms.tabCompare') }}</button>
@@ -310,10 +386,14 @@ watch(activeRoom, (r) => {
       <p v-if="!liveMembers.length" class="empty">{{ t('rooms.noMembers') }}</p>
       <div v-for="m in liveMembers" :key="m.publickey" class="member">
         <span class="badge" :class="{ ok: m.verified }">{{ m.verified ? '✓' : '⚠' }}</span>
-        <span class="c-nm">{{ m.nickname || t('common.anonymous') }}<span v-if="m.publickey === myPubkey" class="you">{{ t('rooms.you') }}</span></span>
+        <span class="c-nm">{{ m.nickname || t('common.anonymous') }}<span v-if="m.publickey === myPubkey" class="you">{{ t('rooms.you') }}</span><small v-if="m.name" class="pname"> · {{ m.name }}</small></span>
+        <span v-if="m.via" class="tag via" :title="t('rooms.contributedBy', { n: m.viaNick || shortKey(m.via) })">↪ {{ m.via === myPubkey ? t('rooms.you2') : (m.viaNick || shortKey(m.via)) }}</span>
         <span v-if="isMemberSealed(activeRoom, m, myPubkey)" class="tag gold">🔒</span>
         <span class="seal" :class="sealInfo(m).cls" :title="sealInfo(m).text">{{ sealInfo(m).icon }}</span>
         <span class="mono">{{ shortKey(m.publickey) }}</span>
+        <button v-if="m.via === myPubkey" class="go danger mini-share" @click="removeFriendContrib(m)">
+          {{ removePending === m.publickey ? t('rooms.removeFriendSure') : t('rooms.removeFriend') }}
+        </button>
       </div>
     </template>
   </div>
@@ -339,6 +419,7 @@ input, .sel { width: 100%; background: var(--bg); border: 1px solid var(--line);
 .empty { color: var(--muted); font-style: italic; font-size: 0.85rem; padding: 0.4rem 0; }
 
 .contribute { border: 1px solid var(--azure); border-radius: 12px; padding: 0.9rem; margin-bottom: 0.9rem; background: rgba(65,180,255,0.06); }
+.contribute.friend { border-color: var(--gold); background: rgba(255, 200, 87, 0.05); }
 .contribute-h { font-size: 0.88rem; font-weight: 700; margin-bottom: 0.5rem; }
 .pick { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.35rem 0; }
 .pick-nm { font-size: 0.88rem; }
@@ -371,4 +452,6 @@ input, .sel { width: 100%; background: var(--bg); border: 1px solid var(--line);
 .seal.late, .seal.bad { color: var(--gold); }
 .seal.none { color: var(--muted); }
 .tag.gold { color: var(--gold); border: 1px solid var(--gold); border-radius: 5px; padding: 0.05rem 0.35rem; font-size: 0.66rem; }
+.tag.via { color: var(--azure); border: 1px solid var(--azure); border-radius: 5px; padding: 0.05rem 0.35rem; font-size: 0.66rem; white-space: nowrap; }
+.pname { color: var(--muted); font-weight: 400; }
 </style>

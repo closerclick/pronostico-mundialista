@@ -22,6 +22,8 @@ export interface RoomMember {
   nickname?: string
   /** la firma del pronóstico verificó (autoría confiable) */
   verified: boolean
+  /** nombre/título del pronóstico (viaja en el frag firmado; solo display) */
+  name?: string
   /** fragmento firmado original del pronóstico (blob base64url del enlace) */
   frag: string
   /** código compacto del pronóstico (decodificable para puntuar/comparar) */
@@ -44,6 +46,11 @@ export interface RoomMember {
   /** versión puesta por el AUTOR (ms epoch del sobre): clave de last-write-wins.
    *  Mayor gana → re-aportar/borrar le gana a lo anterior. Ausente = legacy (0). */
   version?: number
+  /** REENVÍO: pubkey del miembro que aportó este pronóstico de un amigo (sobre
+   *  v4). Ausente = aporte del propio autor. Lo del autor SIEMPRE gana al reenvío. */
+  via?: string
+  /** apodo del aportador del reenvío (del sobre v4; solo display) */
+  viaNick?: string
   /** marca temporal local de la última versión recibida (bookkeeping/cloud) */
   updatedAt: number
 }
@@ -117,22 +124,37 @@ export function setActiveRoomId (id: string | null): void {
 /** ¿El pronóstico de este miembro está sellado (oculto) para mí ahora mismo? */
 export function isMemberSealed (room: Room, member: RoomMember, myPubkey: string | null): boolean {
   if (member.publickey === myPubkey) return false // los míos siempre los veo
+  // Lo que YO reenvié ya lo conozco (vino de mi librería): no tiene sentido sellármelo.
+  if (member.via && member.via === myPubkey) return false
   return room.sealedUntil > Date.now()
 }
 
+// Rango de precedencia: lo aportado por el PROPIO autor (sin via, incluida su
+// lápida) siempre le gana a un reenvío de terceros, sin importar la versión.
+// Así nadie puede pisar el pronóstico propio del amigo (ni revivir lo que él
+// borró) reenviando un frag viejo con un reloj más nuevo.
+function rankOf (m: RoomMember): number {
+  return m.via ? 1 : 2
+}
+
 /**
- * Inserta o reemplaza un miembro (por publickey) con last-write-wins por la
- * VERSIÓN del autor (`version`, ms del sobre firmado). Un tombstone con version
- * mayor le gana al pronóstico; re-aportar con version mayor le gana al tombstone.
- * Devuelve true si cambió el estado.
+ * Inserta o reemplaza un miembro (por publickey). Primero manda el RANGO (autor
+ * gana a reenvío); a igual rango, last-write-wins por la VERSIÓN del sobre
+ * (`version`, ms). Un tombstone con version mayor le gana al pronóstico;
+ * re-aportar con version mayor le gana al tombstone. El retiro de un reenvío
+ * solo lo aplica quien hizo ESE reenvío. Devuelve true si cambió el estado.
  */
 export function upsertMember (room: Room, member: RoomMember): boolean {
   const i = room.members.findIndex((m) => m.publickey === member.publickey)
   if (i < 0) { room.members.push(member); room.updatedAt = Date.now(); return true }
-  if ((member.version ?? 0) >= (room.members[i]!.version ?? 0)) {
-    room.members[i] = member
-    room.updatedAt = Date.now()
-    return true
+  const cur = room.members[i]!
+  if (rankOf(member) < rankOf(cur)) return false
+  if (rankOf(member) === rankOf(cur)) {
+    if ((member.version ?? 0) < (cur.version ?? 0)) return false
+    // Lápida de reenvío: solo borra el reenvío del MISMO aportador.
+    if (member.deleted && member.via && cur.via && member.via !== cur.via) return false
   }
-  return false
+  room.members[i] = member
+  room.updatedAt = Date.now()
+  return true
 }

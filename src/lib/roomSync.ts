@@ -84,6 +84,15 @@ export class RoomSync {
     this.broadcastByPubkey()            // miembros offline: queda encolado 24h
   }
 
+  /** Difunde un sobre puntual (p.ej. el REENVÍO del pronóstico de un amigo) sin
+   *  reemplazar `myEnv` (mi aporte propio se sigue re-difundiendo como siempre). */
+  broadcastEnv (env: string) {
+    this.sendEnv([...this.peers], env)
+    const pks = (this.handlers.memberPubkeys?.() ?? []).filter(Boolean)
+    if (!pks.length) return
+    try { getProxyClient().sendByPubkey(pks, { type: 'ROOM_PREDICTION', roomId: this.roomId, env }) } catch { /* */ }
+  }
+
   private emitCount () { this.handlers.onPeerCount?.(this.peers.size + 1) }
 
   private send (tokens: string[], msg: RoomMsg) {

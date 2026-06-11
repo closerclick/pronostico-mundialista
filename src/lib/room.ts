@@ -83,16 +83,25 @@ export async function parseRoomInvite (frag: string): Promise<ParsedRoomInvite |
 // --- Aporte de un miembro: SOBRE FIRMADO con ts del autor --------------------
 //
 // El aporte viaja como un sobre que el autor FIRMA con su vault:
-//   { r:roomId, f:fragFirmado, t:tsAutor }            contribución
-//   { r:roomId, d:1,           t:tsAutor }            retract (tombstone)
+//   { r:roomId, f:fragFirmado, t:tsAutor }            contribución (v3)
+//   { r:roomId, d:1,           t:tsAutor }            retract (tombstone, v3)
 // El `t` (ms del reloj del autor) ordena versiones: re-aportar o BORRAR le gana
 // a lo anterior (last-write-wins por `t`). Como el sobre va firmado:
 //   - un peer puede REENVIAR sobres ajenos sin poder alterarlos (gossip seguro),
 //   - solo el autor puede borrar lo suyo (nadie puede falsear el borrado ajeno).
+//
+// REENVÍO (v4): un miembro puede aportar el pronóstico FIRMADO de un amigo (lo
+// importó por enlace; el frag original del amigo prueba la autoría por sí solo):
+//   { r, f:fragDelAmigo, t, n?:nickAportador }        aporte de amigo
+//   { r, d:1, s:pubkeyDelAmigo, t }                   retiro de MI reenvío
+// El sobre lo firma el APORTADOR (≠ autor del frag). Va con byte de versión 4:
+// los clientes viejos lo descartan en silencio (no crashean). La precedencia la
+// resuelve upsertMember: lo del propio autor SIEMPRE le gana a un reenvío.
 
 export const MEMBER_ENV_VERSION = 3
+export const MEMBER_FWD_VERSION = 4
 
-interface MemberEnv { r: string; f?: string; d?: 1; t: number }
+interface MemberEnv { r: string; f?: string; d?: 1; t: number; s?: string; n?: string }
 
 /** Firma el sobre de contribución (mi pronóstico) para una sala. */
 export async function buildMemberEnvelope (roomId: string, frag: string, ts: number): Promise<string> {
@@ -105,6 +114,21 @@ export async function buildMemberEnvelope (roomId: string, frag: string, ts: num
 export async function buildRetractEnvelope (roomId: string, ts: number): Promise<string> {
   const env: MemberEnv = { r: roomId, d: 1, t: ts }
   const { blob } = await signBlob(JSON.stringify(env), MEMBER_ENV_VERSION)
+  return blob
+}
+
+/** Firma el sobre de REENVÍO: aporto a la sala el pronóstico firmado de un amigo. */
+export async function buildForwardEnvelope (roomId: string, frag: string, ts: number, nick?: string): Promise<string> {
+  const env: MemberEnv = { r: roomId, f: frag, t: ts }
+  if (nick) env.n = nick.slice(0, 40)
+  const { blob } = await signBlob(JSON.stringify(env), MEMBER_FWD_VERSION)
+  return blob
+}
+
+/** Firma el retiro de MI reenvío del pronóstico del amigo `authorPubkey`. */
+export async function buildForwardRetractEnvelope (roomId: string, authorPubkey: string, ts: number): Promise<string> {
+  const env: MemberEnv = { r: roomId, d: 1, s: authorPubkey, t: ts }
+  const { blob } = await signBlob(JSON.stringify(env), MEMBER_FWD_VERSION)
   return blob
 }
 
@@ -125,26 +149,47 @@ export interface ParsedMemberEnv { roomId: string; member: RoomMember }
 
 /**
  * Verifica un sobre firmado y arma el miembro (o el tombstone si es retract).
- * Rechaza si la firma no valida o si el sobre no lo firmó el MISMO autor del
- * pronóstico que envuelve. Null si inválido.
+ * v3 (aporte propio): el sobre debe firmarlo el MISMO autor del pronóstico.
+ * v4 (reenvío): el sobre lo firma OTRO miembro (`via`); la autoría la prueba la
+ * firma del amigo dentro del frag (obligatoria). Null si inválido.
  */
 export async function memberFromEnvelope (envBlob: string): Promise<ParsedMemberEnv | null> {
-  const res = await verifyBlob(envBlob, MEMBER_ENV_VERSION)
+  const v3 = await verifyBlob(envBlob, MEMBER_ENV_VERSION)
+  const res = v3 ?? await verifyBlob(envBlob, MEMBER_FWD_VERSION)
   if (!res || !res.verified) return null
+  const isFwd = !v3
   let env: MemberEnv
   try { env = JSON.parse(res.content) } catch { return null }
   if (!env.r || typeof env.t !== 'number') return null
-  const author = res.publickey
+  const signer = res.publickey
   if (env.d) {
+    if (isFwd) {
+      // Retiro de un reenvío: la lápida apunta al AUTOR (s) pero la firma el
+      // aportador (via). upsertMember solo la aplica sobre SU propio reenvío.
+      if (typeof env.s !== 'string' || !env.s) return null
+      return {
+        roomId: env.r,
+        member: { publickey: env.s, verified: true, deleted: true, frag: '', code: '', env: envBlob, version: env.t, via: signer, updatedAt: Date.now() },
+      }
+    }
     return {
       roomId: env.r,
-      member: { publickey: author, verified: true, deleted: true, frag: '', code: '', env: envBlob, version: env.t, updatedAt: Date.now() },
+      member: { publickey: signer, verified: true, deleted: true, frag: '', code: '', env: envBlob, version: env.t, updatedAt: Date.now() },
     }
   }
   if (!env.f) return null
   const m = await memberFromFrag(env.f)
   if (!m) return null
-  if (m.publickey !== author) return null // el sobre debe firmarlo el mismo autor del pronóstico
+  if (isFwd) {
+    // La confianza viene SOLO de la firma del amigo dentro del frag: obligatoria.
+    if (!m.verified) return null
+    if (m.publickey !== signer) {
+      m.via = signer
+      if (env.n) m.viaNick = String(env.n).slice(0, 40)
+    } // si me reenvío a mí mismo, cuenta como aporte propio (sin via)
+  } else if (m.publickey !== signer) {
+    return null // v3: el sobre debe firmarlo el mismo autor del pronóstico
+  }
   m.env = envBlob
   m.version = env.t
   m.updatedAt = Date.now()
@@ -186,6 +231,7 @@ export async function memberFromFrag (frag: string): Promise<RoomMember | null> 
     publickey: parsed.publickey,
     nickname: parsed.nickname,
     verified: parsed.verified,
+    name: parsed.name,
     frag,
     code: parsed.code,
     mode,
