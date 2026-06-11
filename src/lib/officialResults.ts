@@ -113,11 +113,17 @@ export interface OfficialBuild {
  * manuales GANAN sobre los proveedores (state of truth); los proveedores
  * rellenan el resto. Solo aplica partidos empezados/terminados.
  */
+// ¿El partido del feed trae algún dato de resultado? Un override sin goles ni
+// ganador no informa nada: aplicarlo TAPARÍA el dato real del proveedor.
+function hasResultInfo (m: FeedMatch): boolean {
+  return m.homeGoals != null || m.awayGoals != null || m.winner != null
+}
+
 export function buildOfficial (feed: Feed): OfficialBuild {
-  // Lookup por clave de match; overrides al final → ganan.
+  // Lookup por clave de match; overrides al final → ganan (solo si traen dato).
   const map = new Map<string, FeedMatch>()
   for (const m of feed.matches || []) if (m.home && m.away) map.set(feedKey(m), m)
-  for (const o of feed.overrides || []) if (o.home && o.away) map.set(feedKey(o), o)
+  for (const o of feed.overrides || []) if (o.home && o.away && hasResultInfo(o)) map.set(feedKey(o), o)
 
   const pred = defaultPrediction()
   pred.mode = 'score'
@@ -237,13 +243,30 @@ function idToOverride (pred: Prediction, id: number, resolved: ReturnType<typeof
  */
 export function buildPublishItems (pred: Prediction, feed: Feed): OverrideItem[] {
   const providerResults = buildOfficial({ ...feed, overrides: [] }).results
+  const merged = buildOfficial(feed)
   const resolved = resolveMatches(pred)
   const items: OverrideItem[] = []
   for (const k of Object.keys(pred.results)) {
     const id = Number(k)
-    if (sameResult(pred.results[id], providerResults[id])) continue
+    const same = sameResult(pred.results[id], providerResults[id])
+    if (same) {
+      // Coincide con el proveedor pero hay un override manual DISTINTO vigente:
+      // se publica un `clear` para que vuelva a mandar el proveedor.
+      if (merged.provenance[id] === 'manual' && !sameResult(pred.results[id], merged.results[id])) {
+        const it = idToOverride(pred, id, resolved)
+        if (it) items.push({ home: it.home, away: it.away, kickoff: it.kickoff, clear: true })
+      }
+      continue
+    }
     const it = idToOverride(pred, id, resolved)
-    if (it) items.push(it)
+    // Nunca publicar un override SIN dato (sin goles ni ganador): no corrige
+    // nada y taparía el resultado del proveedor en todos los clientes.
+    if (it && (it.homeGoals != null || it.awayGoals != null || it.winner != null)) items.push(it)
+  }
+  // Limpieza: overrides vacíos ya publicados (datos basura históricos) se
+  // retiran del relay en la próxima publicación del admin.
+  for (const o of feed.overrides || []) {
+    if (o.home && o.away && !hasResultInfo(o)) items.push({ home: o.home, away: o.away, kickoff: o.kickoff, clear: true })
   }
   return items
 }
