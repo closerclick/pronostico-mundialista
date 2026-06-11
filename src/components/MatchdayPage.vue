@@ -43,7 +43,10 @@ const upcomingDays = computed<DayGroup[]>(() => {
   const today = dayKey(now.value)
   const groups = new Map<string, DayGroup>()
   for (const f of fixtures.value) {
-    if (fixtureStarted(f, now.value)) continue
+    // Los partidos de HOY se quedan en su día aunque ya hayan empezado (fila
+    // bloqueada con tu pick + marcador oficial); los de días pasados van a
+    // "Jugados".
+    if (fixtureStarted(f, now.value) && dayKey(f.kickoff) !== today) continue
     const d = dayKey(f.kickoff)
     let g = groups.get(d)
     if (!g) {
@@ -61,7 +64,11 @@ const upcomingDays = computed<DayGroup[]>(() => {
 })
 
 const played = computed<Fixture[]>(() =>
-  fixtures.value.filter((f) => fixtureStarted(f, now.value)).reverse())
+  fixtures.value.filter((f) => fixtureStarted(f, now.value) && dayKey(f.kickoff) !== dayKey(now.value)).reverse())
+
+// "En juego" (heurística por hora: sin estado en vivo en el fixture).
+const isLive = (f: Fixture): boolean =>
+  fixtureStarted(f, now.value) && now.value < f.kickoff + 2.5 * 3_600_000
 
 // Puntaje propio (no estricto: la UI ya impide editar tras el kickoff). El dato
 // "sellados a tiempo" muestra cuánto de eso es PROBABLE ante terceros (salas).
@@ -206,10 +213,27 @@ const ptsOf = (f: Fixture): number => score.value.per.get(f.id)?.pts ?? 0
       <div v-for="f in g.items" :key="f.id" class="row" data-testid="daily-row" :data-match="f.id">
         <div class="meta">
           <span class="ph">{{ phase(f) }}</span>
+          <span v-if="isLive(f)" class="live-tag">● {{ t('daily.live') }}</span>
           <span class="hr">{{ hourOf(f) }}</span>
         </div>
         <!-- Llave aún sin equipos: por definir -->
         <p v-if="f.home == null || f.away == null" class="tbd">{{ t('daily.noTeams') }}</p>
+        <!-- Ya empezó (hoy): pick congelado + marcador oficial en vivo -->
+        <template v-else-if="fixtureStarted(f, now)">
+          <div class="duel">
+            <span class="team"><span class="fl">{{ flag(f.home) }}</span> <span class="cd mono-code">{{ code(f.home) }}</span></span>
+            <span class="res">
+              <span class="of">{{ fmtPick(officialOf(f), f) }}</span>
+              <span class="mine" :class="{ none: !picks[f.id] }">{{ picks[f.id] ? t('daily.myPick', { p: fmtPick(picks[f.id], f) }) : t('daily.noPick') }}</span>
+            </span>
+            <span class="team right"><span class="cd mono-code">{{ code(f.away) }}</span> <span class="fl">{{ flag(f.away) }}</span></span>
+          </div>
+          <p v-if="picks[f.id]" class="seal" :class="sealState(f)">
+            <template v-if="sealState(f) === 'sealed'">🕓 {{ sealLabel(f) }}</template>
+            <template v-else-if="sealState(f) === 'late'">⚠ {{ sealLabel(f) }}</template>
+            <template v-else>⚠ {{ t('daily.notProven') }}</template>
+          </p>
+        </template>
         <template v-else>
           <div class="duel">
             <span class="team"><span class="fl">{{ flag(f.home) }}</span> <span class="cd mono-code">{{ code(f.home) }}</span></span>
@@ -284,6 +308,7 @@ const ptsOf = (f: Fixture): number => score.value.per.get(f.id)?.pts ?? 0
 .day-h { color: var(--muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; margin: 1rem 0 0.5rem; display: flex; align-items: center; gap: 0.45rem; }
 .today .day-h { color: var(--azure); }
 .today-tag { background: var(--azure); color: #042038; border-radius: 6px; padding: 0.05rem 0.4rem; font-weight: 800; font-size: 0.68rem; }
+.live-tag { color: var(--green); font-weight: 800; font-size: 0.7rem; letter-spacing: 0.04em; }
 .row { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 0.6rem 0.75rem; margin-bottom: 0.5rem; }
 .today .row { border-color: rgba(65, 180, 255, 0.45); }
 .meta { display: flex; justify-content: space-between; align-items: center; font-size: 0.68rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.35rem; }
