@@ -298,6 +298,20 @@ function adoptIncomingSeal (entry: SavedPrediction, parsed: IncomingPrediction, 
 
 const dailyEntry = computed(() => findDailyEntry(library.value))
 
+// Aporte AUTOMÁTICO a las salas de la fecha: al cargar la app, al unirse a una
+// sala de la fecha o al cambiar los picks, la entrada diaria se publica sola
+// (sin botón "Contribuir"). recontributeDaily omite las salas cuyo aporte ya
+// está al día y respeta si el usuario borró su aporte a propósito.
+watch(
+  () => [rooms.value.filter((r) => r.daily).map((r) => r.id).join(','), dailyEntry.value?.code ?? ''],
+  () => {
+    const entry = dailyEntry.value
+    if (!entry || !Object.keys(entry.results ?? {}).length) return
+    void recontributeDaily(entry, { onlyIfChanged: true })
+  },
+  { immediate: true },
+)
+
 function ensureDaily () {
   const { changed } = ensureDailyEntry(library.value, t('daily.entryName'))
   if (changed) saveLibrary(library.value)

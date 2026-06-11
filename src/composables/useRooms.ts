@@ -212,14 +212,22 @@ function leaveRoom (id: string) {
   if (activeRoomId.value === id) closeRoom()
 }
 
-// --- Recontribución automática del pronóstico de la FECHA --------------------
-// En una sala de la fecha el aporte cambia cada día (los partidos de hoy). Tras
-// guardar picks, refrescamos en silencio el aporte en TODAS las salas de la
-// fecha donde ya aporté (firmado de nuevo + sellos por partido). El sobre queda
-// guardado en el miembro: la próxima sync de cada sala lo difunde (gossip).
-async function recontributeDaily (entry: SavedPrediction): Promise<void> {
-  const mine = rooms.value.filter((r) =>
-    r.daily && r.members.some((m) => m.publickey === myPubkey.value && !m.deleted && !m.via))
+// --- Contribución AUTOMÁTICA del pronóstico de la FECHA ----------------------
+// En una sala de la fecha el aporte cambia cada día (los partidos de hoy), así
+// que el aporte es automático: en TODA sala de la fecha donde estoy (haya
+// aportado antes o no) se publica/refresca en silencio mi entrada diaria
+// (firmada + sellos por partido). Única excepción: si me borré a propósito
+// (lápida mía), se respeta. Con `onlyIfChanged` se omiten las salas cuyo
+// aporte vigente ya es este mismo código (no re-firmar sin cambios). El sobre
+// queda guardado en el miembro: la próxima sync de cada sala lo difunde.
+async function recontributeDaily (entry: SavedPrediction, opts?: { onlyIfChanged?: boolean }): Promise<void> {
+  const mine = rooms.value.filter((r) => {
+    if (!r.daily) return false
+    const m = r.members.find((mm) => mm.publickey === myPubkey.value)
+    if (m?.deleted) return false
+    if (opts?.onlyIfChanged && m && !m.via && m.code === entry.code) return false
+    return true
+  })
   if (!mine.length) return
   try {
     const idi = await getIdentity()
