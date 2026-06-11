@@ -364,15 +364,23 @@ function dailyPopupToSection () {
 }
 
 // El popup sale en visitas "limpias" (sin enlace entrante) cuando hay partidos
-// de HOY o MAÑANA sin pronosticar; el primer arranque se lo deja al tutorial.
-function maybeShowDailyPopup () {
-  let tutorialPending = false
-  try { tutorialPending = !localStorage.getItem('mundial.tutorial') } catch { /* */ }
-  if (tutorialPending) return
+// de HOY o MAÑANA sin pronosticar. En el primer arranque no compite con el
+// tutorial: espera a que termine (o se salte) y sale a continuación.
+let tutorialCtl: EventTarget | null = null
+function showDailyPopupIfPending () {
   if (shouldShowDailyPopup(allFixtures(officialEntry.value), dailyEntry.value)) {
     dailyPopupOpen.value = true
     trackEvent('fecha/popup')
   }
+}
+function maybeShowDailyPopup () {
+  let tutorialPending = false
+  try { tutorialPending = !localStorage.getItem('mundial.tutorial') } catch { /* */ }
+  if (tutorialPending && tutorialCtl) {
+    tutorialCtl.addEventListener('cc-tutorial-done', () => { showDailyPopupIfPending() }, { once: true })
+    return
+  }
+  showDailyPopupIfPending()
 }
 
 // Cambio de pestaña con guarda: si hay cambios sin aplicar (afectan las llaves),
@@ -1186,7 +1194,7 @@ onMounted(async () => {
   // Tutorial guiado (una sola vez por dispositivo). Solo en visita "limpia" (sin
   // enlace entrante), para no interrumpir a quien llega por un enlace compartido.
   if (!frag) {
-    startAppTutorial({
+    tutorialCtl = startAppTutorial({
       lang: () => locale.value,
       setSection: (s) => { section.value = s },
       setSidebar: (open) => { sidebarOpen.value = open },

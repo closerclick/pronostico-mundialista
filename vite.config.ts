@@ -1,7 +1,21 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { VitePWA } from 'vite-plugin-pwa'
 import basicSsl from '@vitejs/plugin-basic-ssl'
+import { execSync } from 'node:child_process'
+
+// <meta name="commit"> con el hash del commit del build: permite ver a simple
+// vista (Ver código fuente / document.querySelector) qué versión sirve el
+// dominio — clave para diagnosticar cachés viejas. Normado en CONVENCIONES-APPS.
+function commitMeta (): Plugin {
+  let hash = 'dev'
+  try { hash = execSync('git rev-parse --short HEAD').toString().trim() } catch { /* sin git */ }
+  return {
+    name: 'commit-meta',
+    transformIndexHtml: (html) =>
+      html.replace('</head>', `  <meta name="commit" content="${hash}" />\n  </head>`),
+  }
+}
 
 // https://vite.dev/config/
 export default defineConfig(({ command }) => ({
@@ -16,6 +30,7 @@ export default defineConfig(({ command }) => ({
     // HTTPS autofirmado en desarrollo (contexto seguro para el vault de identidad,
     // portapapeles y Web Share). El navegador avisará del cert no confiable: aceptar.
     basicSsl(),
+    commitMeta(),
     VitePWA({
       // DESARROLLO (command === 'serve'): SW autodestructivo. Limpia caché previa
       // y se desregistra para servir SIEMPRE contenido fresco desde la red.
