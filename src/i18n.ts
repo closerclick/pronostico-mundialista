@@ -64,7 +64,7 @@ const es = {
     allDesc: 'Las dos fases: fase de grupos y llaves (eliminatorias). El pronóstico clásico y completo.',
     groupsDesc: 'Solo la fase de grupos: ordenas/cargas los grupos y no hay llaves.',
     bracketDesc: 'Solo las llaves, partiendo de los clasificados oficiales de la fase de grupos.',
-    bracketSoon: 'Se habilitará a su debido tiempo.',
+    bracketSoon: 'Se habilita cuando los resultados oficiales de la fase de grupos estén completos.',
   },
   warn: {
     title: 'Pronóstico incompleto',
@@ -461,7 +461,7 @@ const en: typeof es = {
     allDesc: 'Both stages: group stage and the knockout bracket. The classic, full prediction.',
     groupsDesc: 'Group stage only: you order/fill the groups, no bracket.',
     bracketDesc: 'Bracket only, starting from the official group-stage qualifiers.',
-    bracketSoon: 'Coming soon.',
+    bracketSoon: 'Unlocks once the official group-stage results are complete.',
   },
   warn: {
     title: 'Incomplete prediction',

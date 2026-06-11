@@ -8,7 +8,7 @@ import {
   confirmStandings, revertDraft, autoConfirmNonBracket, hasPendingChanges, completeness,
   listMissing, type Prediction, type MissingItem,
 } from './lib/prediction'
-import type { GameMode, Scope } from './lib/standings'
+import { GROUP_MATCH_COUNT, computeStandings, type GameMode, type Scope, type Results } from './lib/standings'
 import { encodePrediction, decodePrediction } from './lib/codec'
 import { parseShareFragment, buildShareUrl, getIdentity, SHARE_BASE } from './lib/share'
 import { useBackLayer } from '@closerclick/closer-click-nav/vue'
@@ -114,17 +114,22 @@ const activeModeName = computed(() => modeName(pred.mode))
 const activeScopeName = computed(() => scopeName(pred.scope))
 
 // El scope 'bracket' (Solo llaves) se siembra desde los resultados oficiales de
-// grupos, así que se OCULTA hasta tener resultados oficiales (se lanzará luego).
-// El modelo de datos ya lo soporta; este flag solo controla su visibilidad en
-// el selector. Poner en true para habilitarlo.
-const BRACKET_SCOPE_ENABLED = false
+// grupos, así que se habilita cuando esos resultados están COMPLETOS (72/72).
+// Cuenta cualquier llenado de la entrada oficial: el relay (al terminar la fase
+// de grupos) o el botón "llenar al azar" — esto último sirve de debug.
+const officialGroupsComplete = computed(() => {
+  const r = officialEntry.value?.results
+  if (!r) return false
+  for (let i = 0; i < GROUP_MATCH_COUNT; i++) if (!r[i]) return false
+  return true
+})
 // Alcances ofrecidos en el selector (paso 2). 'bracket' SIEMPRE se muestra, pero
-// queda DESHABILITADO (no seleccionable) mientras el flag esté en false: así el
-// usuario ve que existe y un aviso de "se habilitará a su debido tiempo".
+// queda DESHABILITADO (no seleccionable) hasta que los resultados oficiales de
+// grupos estén completos: así el usuario ve que existe y cuándo se habilita.
 const SCOPE_OPTIONS = computed<Scope[]>(() => ['all', 'groups', 'bracket'])
-// ¿Está deshabilitado este alcance en el selector? (solo 'bracket', por ahora.)
+// ¿Está deshabilitado este alcance en el selector? (solo 'bracket'.)
 function scopeDisabled (s: Scope): boolean {
-  return s === 'bracket' && !BRACKET_SCOPE_ENABLED
+  return s === 'bracket' && !officialGroupsComplete.value
 }
 // Pestañas válidas según el alcance del pronóstico activo.
 function tabAllowed (target: Tab): boolean {
@@ -637,13 +642,36 @@ function typeSuffix (mode: GameMode, scope: Scope): string {
 }
 
 // Crea un pronóstico NUEVO con un tipo (modo) y alcance (scope) fijos al crearlo.
+// Siembra de 'Solo llaves': la fase de grupos NO la pronostica el usuario, sale
+// de los RESULTADOS OFICIALES (la misma base que habilitó el alcance). Copia los
+// resultados de grupos del oficial y deriva posiciones/terceros reales; el
+// usuario solo elige quién avanza en las llaves.
+function seedBracketFromOfficial (p: Prediction): void {
+  const off = officialEntry.value
+  if (!off?.results) return
+  const groupResults: Results = {}
+  for (let i = 0; i < GROUP_MATCH_COUNT; i++) {
+    const r = off.results[i]
+    if (r) groupResults[i] = JSON.parse(JSON.stringify(r))
+  }
+  const st = computeStandings(groupResults, off.mode ?? 'score')
+  if (p.mode !== 'manual') p.results = groupResults
+  p.groupOrder = st.groupOrder.map((g) => [...g])
+  p.thirdsRank = [...st.thirdsRank]
+  p.draftGroupOrder = st.groupOrder.map((g) => [...g])
+  p.draftThirdsRank = [...st.thirdsRank]
+  prunePicks(p)
+}
+
 function create (mode: GameMode = 'manual', scope: Scope = 'all') {
   const p = defaultPrediction()
   p.mode = mode
   p.scope = scope
+  if (scope === 'bracket') seedBracketFromOfficial(p)
   const entry: SavedPrediction = {
     id: genId(), name: uniqueName(),
-    code: encodePrediction(p), mode, scope, results: {},
+    code: encodePrediction(p), mode, scope, results: p.results,
+    draftGroupOrder: p.draftGroupOrder, draftThirdsRank: p.draftThirdsRank,
     updatedAt: Date.now(), mine: true,
   }
   library.value.push(entry)
@@ -661,10 +689,14 @@ function cloneToType (id: string, mode: GameMode, scope: Scope) {
   p.mode = mode
   p.scope = scope
   if (src.results) p.results = JSON.parse(JSON.stringify(src.results))
+  // A 'Solo llaves': los grupos se re-siembran del oficial (los picks de llaves
+  // del original se conservan; los que dejen de ser válidos se podan solos).
+  if (scope === 'bracket') seedBracketFromOfficial(p)
   const entry: SavedPrediction = {
     id: genId(), name: src.name + typeSuffix(mode, scope),
     code: encodePrediction(p), mode, scope, results: p.results,
-    draftGroupOrder: src.draftGroupOrder, draftThirdsRank: src.draftThirdsRank,
+    draftGroupOrder: scope === 'bracket' ? p.draftGroupOrder : src.draftGroupOrder,
+    draftThirdsRank: scope === 'bracket' ? p.draftThirdsRank : src.draftThirdsRank,
     updatedAt: Date.now(), mine: true,
   }
   library.value.push(entry)
